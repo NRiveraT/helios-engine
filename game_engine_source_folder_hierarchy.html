@@ -1,0 +1,158 @@
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+.tree{font-family:var(--font-mono);font-size:13px;line-height:1.6;padding:1.5rem 1rem 1.5rem 1.25rem}
+.row{display:flex;align-items:baseline;gap:0;cursor:pointer;border-radius:4px;padding:1px 4px;transition:background .12s}
+.row:hover{background:var(--color-background-secondary)}
+.indent{white-space:pre;color:var(--color-border-secondary);font-size:12px;user-select:none;flex-shrink:0}
+.icon{font-size:13px;margin-right:5px;flex-shrink:0}
+.name{font-weight:500;color:var(--color-text-primary);flex-shrink:0}
+.name.dir{color:var(--color-text-primary)}
+.badge{font-size:11px;font-weight:400;padding:1px 7px;border-radius:10px;margin-left:8px;flex-shrink:0}
+.badge.platform{background:#E1F5EE;color:#0F6E56}
+.badge.render{background:#EEEDFE;color:#3C3489}
+.badge.sim{background:#FAECE7;color:#712B13}
+.badge.core{background:#F1EFE8;color:#444441}
+.badge.tools{background:#E6F1FB;color:#0C447C}
+.badge.game{background:#FAEEDA;color:#633806}
+.desc{font-size:12px;color:var(--color-text-tertiary);margin-left:10px;font-family:var(--font-sans)}
+.section-label{font-size:11px;font-weight:500;letter-spacing:.06em;color:var(--color-text-tertiary);text-transform:uppercase;padding:12px 4px 4px;font-family:var(--font-sans)}
+.divider{border:none;border-top:0.5px solid var(--color-border-tertiary);margin:8px 0}
+.tooltip{display:none;position:absolute;background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--color-text-secondary);font-family:var(--font-sans);max-width:240px;line-height:1.5;z-index:10;pointer-events:none}
+.row:hover .tooltip{display:block}
+.legend{display:flex;flex-wrap:wrap;gap:6px;padding:0 4px 1rem}
+</style>
+
+<div style="padding:1rem 0 0">
+<div class="legend">
+  <span class="badge core">core</span><span style="font-size:12px;color:var(--color-text-secondary);font-family:var(--font-sans)">Foundation</span>
+  <span style="width:16px"></span>
+  <span class="badge platform">platform</span><span style="font-size:12px;color:var(--color-text-secondary);font-family:var(--font-sans)">Hardware abstraction</span>
+  <span style="width:16px"></span>
+  <span class="badge render">render</span><span style="font-size:12px;color:var(--color-text-secondary);font-family:var(--font-sans)">Rendering &amp; visuals</span>
+  <span style="width:16px"></span>
+  <span class="badge sim">sim</span><span style="font-size:12px;color:var(--color-text-secondary);font-family:var(--font-sans)">Simulation</span>
+  <span style="width:16px"></span>
+  <span class="badge tools">tools</span><span style="font-size:12px;color:var(--color-text-secondary);font-family:var(--font-sans)">Editor &amp; pipeline</span>
+  <span style="width:16px"></span>
+  <span class="badge game">game</span><span style="font-size:12px;color:var(--color-text-secondary);font-family:var(--font-sans)">Game-specific</span>
+</div>
+
+<div class="tree" id="tree"></div>
+</div>
+
+<script>
+const data = [
+  {type:'section', label:'Engine root'},
+  {d:0, name:'engine/', icon:'📦', desc:'Top-level engine repository'},
+  {d:1, name:'Source/', icon:'📂', desc:'All runtime C++ source'},
+  {d:2, name:'Core/', icon:'📁', badge:'core', desc:'Memory allocators, math library, containers, string handling, RTTI, serialization, logging'},
+  {d:2, name:'Platform/', icon:'📁', badge:'platform', desc:'OS abstraction — file I/O, threading, timers, window/display management'},
+  {d:3, name:'Windows/', icon:'📄', badge:'platform', desc:'Win64 backend: DirectX, WinAPI, WASAPI'},
+  {d:3, name:'Linux/', icon:'📄', badge:'platform', desc:'Linux backend: Vulkan, X11/Wayland, ALSA'},
+  {d:3, name:'Console/', icon:'📄', badge:'platform', desc:'Platform-specific SDKs (PS5, Xbox)'},
+  {d:2, name:'RHI/', icon:'📁', badge:'platform', desc:'Render Hardware Interface: abstract over Vulkan / DX12 / Metal. CommandBuffer, Pipeline, RenderPass types.'},
+  {d:2, name:'Renderer/', icon:'📁', badge:'render', desc:'Scene rendering, materials, lighting, shadows, post-process, RT pipeline'},
+  {d:2, name:'Animation/', icon:'📁', badge:'render', desc:'Skeletal meshes, blend trees, montages, IK solvers, ragdoll'},
+  {d:2, name:'Physics/', icon:'📁', badge:'sim', desc:'Rigid bodies, collision broadphase/narrowphase, constraints, queries (or wrapper for PhysX/Jolt)'},
+  {d:2, name:'Audio/', icon:'📁', badge:'sim', desc:'Audio graph, spatialization, DSP, buses (or wrapper for FMOD/Wwise)'},
+  {d:2, name:'Input/', icon:'📁', badge:'core', desc:'Device polling, action mapping, event dispatch, gamepad/KB/mouse abstraction'},
+  {d:2, name:'Resource/', icon:'📁', badge:'core', desc:'Asset loading, async streaming, reference counting, cache eviction'},
+  {d:2, name:'Scene/', icon:'📁', badge:'core', desc:'Entity/component system, scene graph, world management, spatial partitioning'},
+  {d:2, name:'Gameplay/', icon:'📁', badge:'game', desc:'Ability system, game object base classes, event system, scripting bridge'},
+  {d:2, name:'Networking/', icon:'📁', badge:'core', desc:'Replication, RPC, transport layer (optional module)'},
+  {d:2, name:'Editor/', icon:'📁', badge:'tools', desc:'World editor, asset browser, property panels — editor-only, stripped from shipping build'},
+  {d:1, name:'Shaders/', icon:'📂', desc:'GLSL/HLSL source — compiled offline into SPIR-V/DXIL at build time'},
+  {d:2, name:'Common/', icon:'📁', badge:'render', desc:'Shared includes, utility functions'},
+  {d:2, name:'Passes/', icon:'📁', badge:'render', desc:'GBuffer, Lighting, Shadows, PostProcess'},
+  {d:2, name:'RT/', icon:'📁', badge:'render', desc:'Raytracing hit groups, miss shaders, traversal'},
+  {d:1, name:'Content/', icon:'📂', desc:'Engine-level default assets (fallback textures, default mesh, editor icons)'},
+  {d:1, name:'ThirdParty/', icon:'📂', desc:'Unmodified upstream vendor libs — tracked for version pinning'},
+  {d:2, name:'Jolt/', icon:'📄', badge:'sim', desc:'Physics SDK'},
+  {d:2, name:'SPIRV-Cross/', icon:'📄', badge:'platform', desc:'Shader reflection + transpilation'},
+  {d:2, name:'imgui/', icon:'📄', badge:'tools', desc:'Dear ImGui for editor UI'},
+  {d:2, name:'meshoptimizer/', icon:'📄', badge:'render', desc:'Mesh LOD + vertex cache opt'},
+  {d:1, name:'Tools/', icon:'📂', desc:'Build scripts and offline processing pipelines'},
+  {d:2, name:'Build/', icon:'📁', badge:'tools', desc:'CMake / SCons configuration'},
+  {d:2, name:'AssetPipeline/', icon:'📁', badge:'tools', desc:'Offline importers: texture compression, mesh LOD, audio encoding'},
+  {d:1, name:'Binaries/', icon:'📁', desc:'Compiled outputs — gitignored', muted:true},
+  {d:1, name:'Intermediate/', icon:'📁', desc:'Build cache, generated headers — gitignored', muted:true},
+  {type:'divider'},
+  {type:'section', label:'Game project (alongside engine)'},
+  {d:0, name:'game/', icon:'🎮', desc:'Game-specific repository or workspace'},
+  {d:1, name:'Source/', icon:'📂', desc:'Game C++ code — inherits engine modules'},
+  {d:2, name:'Characters/', icon:'📁', badge:'game', desc:'Character classes, movement components, ability sets'},
+  {d:2, name:'Abilities/', icon:'📁', badge:'game', desc:'GAS ability implementations'},
+  {d:2, name:'UI/', icon:'📁', badge:'game', desc:'HUD, menus, widget components'},
+  {d:2, name:'GameModes/', icon:'📁', badge:'game', desc:'Game state, win conditions, session logic'},
+  {d:1, name:'Content/', icon:'📂', desc:'Game assets — organized by feature, not asset type'},
+  {d:2, name:'Characters/', icon:'📁', badge:'game', desc:'Meshes + animations + materials co-located per character'},
+  {d:2, name:'Levels/', icon:'📁', badge:'game', desc:'Level packages, streaming chunks, world partitions'},
+  {d:2, name:'Audio/', icon:'📁', badge:'sim', desc:'SFX, music, voice — organized by context'},
+  {d:2, name:'VFX/', icon:'📁', badge:'render', desc:'Particle systems, niagara/VFX graph assets'},
+  {d:2, name:'UI/', icon:'📁', badge:'game', desc:'Textures, fonts, layout files for UI'},
+  {d:1, name:'Config/', icon:'📂', desc:'Engine config, game settings, platform overrides'},
+  {d:1, name:'Saved/', icon:'📁', desc:'Logs, crash dumps, autosaves — gitignored', muted:true},
+  {d:1, name:'game.uproject', icon:'📄', desc:'Project descriptor (or project.godot)'},
+];
+
+const tree = document.getElementById('tree');
+
+data.forEach(item => {
+  if(item.type === 'section'){
+    const el = document.createElement('div');
+    el.className = 'section-label';
+    el.textContent = item.label;
+    tree.appendChild(el);
+    return;
+  }
+  if(item.type === 'divider'){
+    const el = document.createElement('hr');
+    el.className = 'divider';
+    tree.appendChild(el);
+    return;
+  }
+
+  const pipes = [];
+  for(let i=0;i<item.d;i++){
+    if(i===item.d-1) pipes.push('├── ');
+    else pipes.push('│   ');
+  }
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.style.position = 'relative';
+
+  const indent = document.createElement('span');
+  indent.className = 'indent';
+  indent.textContent = pipes.join('');
+
+  const icon = document.createElement('span');
+  icon.className = 'icon';
+  icon.textContent = item.icon;
+
+  const name = document.createElement('span');
+  name.className = 'name dir';
+  name.textContent = item.name;
+  if(item.muted) name.style.opacity = '0.45';
+
+  row.appendChild(indent);
+  row.appendChild(icon);
+  row.appendChild(name);
+
+  if(item.badge){
+    const b = document.createElement('span');
+    b.className = 'badge '+item.badge;
+    b.textContent = item.badge;
+    row.appendChild(b);
+  }
+
+  if(item.desc){
+    const d = document.createElement('span');
+    d.className = 'desc';
+    d.textContent = '— '+item.desc;
+    row.appendChild(d);
+  }
+
+  tree.appendChild(row);
+});
+</script>

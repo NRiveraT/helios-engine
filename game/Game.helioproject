@@ -1,0 +1,10 @@
+{
+    "appName": "Helio Sample Game",
+    "window": {
+        "width": 1280,
+        "height": 720,
+        "title": "Helio — V1 verification"
+    },
+    "rayTracing": true,
+    "validation": true
+}

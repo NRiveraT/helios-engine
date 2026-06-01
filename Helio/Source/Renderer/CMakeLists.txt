@@ -1,0 +1,9 @@
+helio_add_module(Renderer
+    SOURCES
+        RenderGraph.cpp
+        Overlay/Overlay.cpp
+        Debug/DebugDraw.cpp
+    PUBLIC_LINK
+        Helio.Core
+        Helio.RHI
+)

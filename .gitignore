@@ -1,0 +1,29 @@
+# Build outputs
+/Binaries/
+/Intermediate/
+/build/
+/out/
+/.vs/
+
+# Runtime
+/game/Saved/
+
+# IDE
+/.idea/
+*.user
+*.vcxproj.user
+
+# CMake
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+
+# vcpkg installed cache (per-config inside build/)
+vcpkg_installed/
+
+# Compiled shader artifacts (regenerated)
+*.spv
+
+# Misc
+*.log
+*.tmp

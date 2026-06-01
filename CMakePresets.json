@@ -1,0 +1,53 @@
+{
+    "version": 4,
+    "cmakeMinimumRequired": { "major": 3, "minor": 27, "patch": 0 },
+    "configurePresets": [
+        {
+            "name": "windows-msvc-base",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "x64",
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x64-windows",
+                "CMAKE_CXX_STANDARD": "20",
+                "CMAKE_CXX_STANDARD_REQUIRED": "ON"
+            }
+        },
+        {
+            "name": "windows-msvc-debug",
+            "inherits": "windows-msvc-base",
+            "displayName": "Windows MSVC Debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "HELIO_TRACY": "ON",
+                "HELIO_OVERLAY": "ON",
+                "HELIO_VALIDATION": "ON"
+            }
+        },
+        {
+            "name": "windows-msvc-release",
+            "inherits": "windows-msvc-base",
+            "displayName": "Windows MSVC RelWithDebInfo",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "HELIO_TRACY": "ON",
+                "HELIO_OVERLAY": "ON",
+                "HELIO_VALIDATION": "OFF"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "windows-msvc-debug",
+            "configurePreset": "windows-msvc-debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "windows-msvc-release",
+            "configurePreset": "windows-msvc-release",
+            "configuration": "RelWithDebInfo"
+        }
+    ]
+}

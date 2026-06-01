@@ -1,0 +1,15 @@
+{
+    "name": "helio",
+    "version-string": "0.1.0",
+    "description": "Modern Vulkan 1.3 rendering engine boilerplate (bindless, RT-capable, render-graph driven).",
+    "dependencies": [
+        "volk",
+        "vulkan-memory-allocator",
+        { "name": "sdl3", "features": ["vulkan"] },
+        "spdlog",
+        "hlslpp",
+        "tracy",
+        "meshoptimizer"
+    ],
+    "builtin-baseline": "c0948694cceff995e5cf90b751e0c5a95d613458"
+}
