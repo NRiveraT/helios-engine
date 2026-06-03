@@ -24,6 +24,8 @@
 #include <vector>
 #include <Overlay/Overlay.h>
 
+#include "Gameplay/World/HelioWorld.h"
+
 
 // int main()
 // {
@@ -236,250 +238,301 @@ using namespace helio::platform::windows;
 using namespace helio::input;
 using namespace math;
 
+
 int main()
 {
     log::Init();
 
-    Window Win({
-        .Title = "Helio",
-        .Width = 1920,
-        .Height = 1080,
-    });
-
-    Device RHI({
-        .NativeWindow = Win.Native(),
-        .InitialWidth = Win.Width(),
-        .InitialHeight = Win.Height(),
-    });
-
-    overlay::Overlay Hud(RHI, Format::RGBA8_SRGB);
-
-    auto ComputePipe = RHI.CreateComputePipeline({
-        .ShaderPath = "Shaders/Compute/Gradient.spv",
-        .DebugName = "Gradient Compute",
-    });
-
-    TextureHandle Depth = RHI.CreateTexture({.Width = static_cast<uint32_t>(Win.Width()), .Height = static_cast<uint32_t>(Win.Height()), .Fmt = Format::D32_SFLOAT, .Usage = TextureUsage::DepthStencilAttachment, .DebugName = "Depth"});
-
-    auto Raymarch = RHI.CreateComputePipeline({
-        .ShaderPath = "Shaders/Compute/RayMarch.spv",
-        .DebugName = "RayMarch Compute",
-    });
-
-
-    auto BlitPipe = RHI.CreateGraphicsPipeline({
-        .ShaderPath = "Shaders/Passes/FullscreenBlit.spv",
-        .ColorFormats = {Format::RGBA8_SRGB},
-        .ColorAttachmentCount = 1,
-        .DepthFormat = Format::D32_SFLOAT,
-        .DepthTest = false,
-        .DepthWrite = false,
-        .DebugName = "FullscreenBlit",
-    });
-
-    auto TrianglePipe = RHI.CreateGraphicsPipeline({
-        .ShaderPath = "Shaders/Passes/Triangle.spv",
-        .ColorFormats = {Format::RGBA8_SRGB},
-        .ColorAttachmentCount = 1,
-        .DebugName = "Triangle",
-    });
-
-    auto Color = RHI.CreateTexture({
-        .Width = static_cast<uint32_t>(Win.Width()), .Height = static_cast<uint32_t>(Win.Height()),
-        .Fmt = Format::RGBA8_SRGB,
-        .Usage = TextureUsage::ColorAttachment | TextureUsage::Sampled | TextureUsage::TransferSrc,
-        .DebugName = "Color",
-    });
-
-    auto Out = RHI.CreateTexture({
-        .Width = static_cast<uint32_t>(Win.Width()), .Height = static_cast<uint32_t>(Win.Height()),
-        .Fmt = Format::RGBA8_UNORM,
-        .Usage = TextureUsage::Storage | TextureUsage::Sampled,
-        .DebugName = "Gradient",
-    });
-
-
-    HELIO_LOG_INFO("Game", "Press ESC or close to exit.");
-
-    helio::input::ActionMap map;
-    map.BindKey("ToggleAdvanced", Key::Tab);
-    Win.Dispatcher().SetActionMap(&map);
-
-    Win.Dispatcher().OnActionPressed("ToggleAdvanced", [&]
-    {
-        Hud.ToggleAdvanced();
-    });
-
-    core::Clock FrameClock;
-    uint64_t FrameIndex = 0;
-
-    MeshSystem MS(RHI);
-
-    auto CubeData = primitives::Cube(1.f);
-    auto CubeMesh = MS.CreateMesh({.Data = &CubeData, .DebugName = "CubeMesh"});
-
-    auto SphereData = primitives::Sphere(1.f, 32, 16);
-    auto SphereMesh = MS.CreateMesh({.Data = &SphereData, .DebugName = "SphereMesh"});
-
-    auto MeshPipeline = CreateMeshInstancedPipeline
-    (RHI,
-     {
-         .ColorFormat = Format::RGBA8_SRGB,
-         .DepthFormat = Format::D32_SFLOAT,
-         .Cull = CullMode::Back,
-         .DepthTest = true,
-         .DepthWrite = true,
-         .DebugName = "MeshPipeline"
-     });
-
-    InstanceBatch Batch(RHI, 1, "Cube Instances");
-
-    auto Blur = RHI.CreateComputePipeline({
-        .ShaderPath = "Shaders/Compute/BoxBlur.spv",
-        .DebugName = "BoxBlur Compute",
-    });
-
-    Transform i;
-
-    while (Win.PumpEvents())
-    {
-        HELIO_PROFILE_FRAME();
-        HELIO_PROFILE_ZONE("Frame");
-        const double FrameStartSec = FrameClock.SecondsSinceStart();
-
-        if (auto* Cmd = RHI.BeginFrame())
-        {
-            RenderGraph rg(RHI, *Cmd);
-
-            rg.Compute("Gradient")
-              .Write(Out)
-              .Execute([&](helio::rhi::CommandList& C)
-              {
-                  C.Bind(ComputePipe);
-                  struct PC
-                  {
-                      uint32_t Slot;
-                  };
-
-                  PC pc{Out.StorageSlot};
-
-                  C.Push(pc);
-                  C.Dispatch2D(Win.Width(), Win.Height(), 8, 8);
-              });
-
-            // rg.Compute("RayMarch")
-            //   .Write(Out)
-            //   .Execute([&](helio::rhi::CommandList& C)
-            //   {
-            //       C.Bind(Raymarch);
-            //       struct PC
-            //       {
-            //           uint32_t Slot;
-            //           float Time;
-            //           float Width;
-            //           float Height;
-            //       };
-            //
-            //       PC pc{Out.StorageSlot, static_cast<float>(FrameClock.SecondsSinceStart()), static_cast<float>(Win.Width()), static_cast<float>(Win.Height())};
-            //
-            //       C.Push(pc);
-            //       C.Dispatch2D(Win.Width(), Win.Height(), 8, 8);
-            //   });
-
-            Batch.Begin();
-            i.RotateAxis(float3(0, 1, 0), 2.f * FrameClock.Tick());
-            Batch.Add(i);
-
-            uint32_t Count = Batch.End();
-
-            rg.Graphics("Color")
-              .Color(Color)
-              .Read(Out)
-              .Depth(Depth, 0.f)
-              .Execute([&](helio::rhi::CommandList& C)
-              {
-                  C.Bind(BlitPipe);
-                  struct PC
-                  {
-                      uint32_t Tex, Sampler;
-                  };
-
-                  PC pc{Out.SampledSlot, 1 /* kSamplerLinearWrap */};
-                  C.Push(pc);
-
-                  C.Draw(3);
-              });
-
-            rg.Graphics("Meshes")
-              .ColorLoad(Color)
-              .Depth(Depth, 0.f)
-              .Execute([&](helio::rhi::CommandList& C)
-              {
-                  MeshInstancedPushConsts MeshPC{};
-
-                  float1 ra = 45.f;
-                  float4x4 pers = math::PerspectiveReverseZLH(hlslpp::radians(ra), (float)Win.Width() / (float)Win.Height(), 0.001f);
-                  MeshPC.ViewProj = mul(pers, math::LookAtLH(float3(0, 0, 10), float3(0), float3(0, 1, 0)));
-                  MeshPC.VertexBufferSlot = CubeMesh.VertexBuffer.BindlessSlot;
-                  MeshPC.InstanceBufferSlot = Batch.Buffer().BindlessSlot;
-                  MeshPC.LightDirWS = float3(-0.5f, -0.8f, -0.3f);
-                  MeshPC.AlbedoTint = float4(1.f, 0.5f, 0.5f, 1.0f);
-
-                  C.Bind(MeshPipeline);
-                  C.SetViewportFull();
-                  C.Push(MeshPC);
-                  C.BindIndexBuffer(CubeMesh.IndexBuffer, IndexTypeFor(CubeMesh));
-
-                  C.DrawIndexed(CubeMesh.IndexCount, Count);
-              });
-
-            rg.Compute("Blur")
-              .Read(Color)
-              .Write(Out)
-              .Execute([&](helio::rhi::CommandList& C)
-              {
-                  C.TransitionForSampling(Color);
-                  C.TransitionForStorageWrite(Out);
-
-                  C.Bind(Blur);
-                  struct PC
-                  {
-                      uint32_t InputSlot, OutputSlot, SamplerSlot;
-                      int Radius;
-                      float Width;
-                      float Height;
-                  };
-
-                  PC pc{Color.SampledSlot, Out.StorageSlot, 0/* kSamplerLinearWrap */, 2, static_cast<float>(Win.Width()), static_cast<float>(Win.Height())};
-                  C.Push(pc);
-                  C.Dispatch2D(Win.Width(), Win.Height(), 8, 8);
-              });
-
-
-            /*struct PC {
-                uint  InputSlot;        // SampledSlot of the source texture
-                uint  OutputSlot;       // StorageSlot of the destination texture (same size)
-                uint  SamplerSlot;      // typically kSamplerLinearClamp
-                int   Radius;           // odd half-extent: radius=2 means 5x5 kernel
-                float Width;
-                float Height;
-            };*/
-
-            // Queue overlay text + schedule its pass.
-            const double NowSec = FrameClock.SecondsSinceStart();
-            const double CpuMs = (NowSec - FrameStartSec) * 1000.0;
-            Hud.DrawStats(CpuMs, RHI.LastFrameGpuMs(), rg.Passes());
-            Hud.Render(rg, Out, static_cast<uint32_t>(Win.Width()), static_cast<uint32_t>(Win.Height()));
-
-            rg.Present(Out);
-            rg.Execute();
-
-            RHI.EndFrame();
-        }
-    }
-
-    RHI.WaitIdle();
-    log::Shutdown();
-
+    gameplay::HelioEngine Engine({});
+    Engine.Run();
+    
     return 0;
 }
+
+// int main()
+// {
+//     log::Init();
+//
+//     Window Win({
+//         .Title = "Helio",
+//         .Width = 1920,
+//         .Height = 1080,
+//     });
+//
+//     Device RHI({
+//         .NativeWindow = Win.Native(),
+//         .InitialWidth = Win.Width(),
+//         .InitialHeight = Win.Height(),
+//     });
+//
+//     overlay::Overlay Hud(RHI, Format::RGBA8_SRGB);
+//
+//     auto ComputePipe = RHI.CreateComputePipeline({
+//         .ShaderPath = "Shaders/Compute/Gradient.spv",
+//         .DebugName = "Gradient Compute",
+//     });
+//
+//     TextureHandle Depth = RHI.CreateTexture({
+//     .Width = static_cast<uint32_t>(Win.Width()),
+//     .Height = static_cast<uint32_t>(Win.Height()), .Fmt = Format::D32_SFLOAT, .Usage = TextureUsage::DepthStencilAttachment, .DebugName = "Depth"});
+//
+//     auto Raymarch = RHI.CreateComputePipeline({
+//         .ShaderPath = "Shaders/Compute/RayMarch.spv",
+//         .DebugName = "RayMarch Compute",
+//     });
+//
+//
+//     auto BlitPipe = RHI.CreateGraphicsPipeline({
+//         .ShaderPath = "Shaders/Passes/FullscreenBlit.spv",
+//         .ColorFormats = {Format::RGBA8_SRGB},
+//         .ColorAttachmentCount = 1,
+//         .DepthFormat = Format::D32_SFLOAT,
+//         .DepthTest = false,
+//         .DepthWrite = false,
+//         .DebugName = "FullscreenBlit",
+//     });
+//
+//     auto TrianglePipe = RHI.CreateGraphicsPipeline({
+//         .ShaderPath = "Shaders/Passes/Triangle.spv",
+//         .ColorFormats = {Format::RGBA8_SRGB},
+//         .ColorAttachmentCount = 1,
+//         .DebugName = "Triangle",
+//     });
+//
+//     auto GradientTex = RHI.CreateTexture({
+//         .Width = static_cast<uint32_t>(Win.Width()), .Height = static_cast<uint32_t>(Win.Height()),
+//         .Fmt = Format::RGBA8_UNORM,
+//         .Usage = TextureUsage::Storage | TextureUsage::Sampled,
+//         .DebugName = "Gradient",
+//     });
+//
+//     auto ColorTex = RHI.CreateTexture({
+//         .Width = static_cast<uint32_t>(Win.Width()), .Height = static_cast<uint32_t>(Win.Height()),
+//         .Fmt = Format::RGBA8_SRGB,
+//         .Usage = TextureUsage::ColorAttachment | TextureUsage::Sampled | TextureUsage::TransferSrc,
+//         .DebugName = "Color",
+//     });
+//
+//     auto FinalCompTex = RHI.CreateTexture({
+//         .Width = static_cast<uint32_t>(Win.Width()), .Height = static_cast<uint32_t>(Win.Height()),
+//         .Fmt = Format::RGBA8_UNORM,
+//         .Usage = TextureUsage::Storage | TextureUsage::Sampled,
+//         .DebugName = "FinalComp",
+//     });
+//
+//     auto Last = RHI.CreateTexture({
+//         .Width = static_cast<uint32_t>(Win.Width()), .Height = static_cast<uint32_t>(Win.Height()),
+//         .Fmt = Format::RGBA8_SRGB,
+//         .Usage = TextureUsage::ColorAttachment | TextureUsage::Sampled | TextureUsage::TransferSrc,
+//         .DebugName = "Last Color",
+//     });
+//
+//     HELIO_LOG_INFO("Game", "Press ESC or close to exit.");
+//
+//     helio::input::ActionMap map;
+//     map.BindKey("ToggleAdvanced", Key::Tab);
+//     Win.Dispatcher().SetActionMap(&map);
+//
+//     Win.Dispatcher().OnActionPressed("ToggleAdvanced", [&]
+//     {
+//         Hud.ToggleAdvanced();
+//     });
+//
+//     core::Clock FrameClock;
+//     uint64_t FrameIndex = 0;
+//
+//     MeshSystem MS(RHI);
+//
+//     auto CubeData = primitives::Cube(1.f);
+//     auto CubeMesh = MS.CreateMesh({.Data = &CubeData, .DebugName = "CubeMesh"});
+//
+//     auto SphereData = primitives::Sphere(1.f, 32, 16);
+//     auto SphereMesh = MS.CreateMesh({.Data = &SphereData, .DebugName = "SphereMesh"});
+//
+//     auto MeshPipeline = CreateMeshInstancedPipeline
+//     (RHI,
+//      {
+//          .ColorFormat = Format::RGBA8_SRGB,
+//          .DepthFormat = Format::D32_SFLOAT,
+//          .Cull = CullMode::Back,
+//          .DepthTest = true,
+//          .DepthWrite = true,
+//          .DebugName = "MeshPipeline"
+//      });
+//
+//     InstanceBatch Batch(RHI, 1, "Cube Instances");
+//
+//     auto Blur = RHI.CreateComputePipeline({
+//         .ShaderPath = "Shaders/Compute/BoxBlur.spv",
+//         .DebugName = "BoxBlur Compute",
+//     });
+//
+//     Transform i;
+//
+//     while (Win.PumpEvents())
+//     {
+//         HELIO_PROFILE_FRAME();
+//         HELIO_PROFILE_ZONE("Frame");
+//         const double FrameStartSec = FrameClock.SecondsSinceStart();
+//
+//         if (auto* Cmd = RHI.BeginFrame())
+//         {
+//             RenderGraph rg(RHI, *Cmd);
+//
+//             rg.Compute("Gradient")
+//               .Write(GradientTex)
+//               .Execute([&](helio::rhi::CommandList& C)
+//               {
+//                   C.Bind(ComputePipe);
+//                   struct PC
+//                   {
+//                       uint32_t Slot;
+//                   };
+//
+//                   PC pc{GradientTex.StorageSlot};
+//
+//                   C.Push(pc);
+//                   C.Dispatch2D(Win.Width(), Win.Height(), 8, 8);
+//               });
+//
+//             // rg.Compute("RayMarch")
+//             //   .Write(Out)
+//             //   .Execute([&](helio::rhi::CommandList& C)
+//             //   {
+//             //       C.Bind(Raymarch);
+//             //       struct PC
+//             //       {
+//             //           uint32_t Slot;
+//             //           float Time;
+//             //           float Width;
+//             //           float Height;
+//             //       };
+//             //
+//             //       PC pc{Out.StorageSlot, static_cast<float>(FrameClock.SecondsSinceStart()), static_cast<float>(Win.Width()), static_cast<float>(Win.Height())};
+//             //
+//             //       C.Push(pc);
+//             //       C.Dispatch2D(Win.Width(), Win.Height(), 8, 8);
+//             //   });
+//
+//             Batch.Begin();
+//             i.RotateAxis(float3(0, 1, 0), 2.f * FrameClock.Tick());
+//             Batch.Add(i);
+//
+//             uint32_t Count = Batch.End();
+//
+//             // rg.Graphics("Color")
+//             //   .Color(Color)
+//             //   .Read(Out)
+//             //   .Depth(Depth, 0.f)
+//             //   .Execute([&](helio::rhi::CommandList& C)
+//             //   {
+//             //       C.Bind(BlitPipe);
+//             //       struct PC
+//             //       {
+//             //           uint32_t Tex, Sampler;
+//             //       };
+//             //
+//             //       PC pc{Out.SampledSlot, 1 /* kSamplerLinearWrap */};
+//             //       C.Push(pc);
+//             //
+//             //       C.Draw(3);
+//             //   });
+//
+//             rg.Graphics("Meshes")
+//               .Color(ColorTex, .2f, .2f, .2f, 1.f)
+//               .Read(GradientTex)
+//               .Depth(Depth, 0.f)
+//               .Execute([&](helio::rhi::CommandList& C)
+//               {
+//                   C.Bind(BlitPipe);
+//                   struct PC
+//                   {
+//                       uint32_t Tex, Sampler;
+//                   };
+//                   
+//                   PC pc{GradientTex.SampledSlot, 1 /* kSamplerLinearWrap */};
+//                   C.Push(pc);
+//                   
+//                   C.Draw(3);
+//
+//                   MeshInstancedPushConsts MeshPC{};
+//
+//                   float1 ra = 45.f;
+//                   float4x4 pers = math::PerspectiveReverseZLH(hlslpp::radians(ra), (float)Win.Width() / (float)Win.Height(), 0.001f);
+//                   MeshPC.ViewProj = mul(pers, math::LookAtLH(float3(0, 0, 10), float3(0), float3(0, 1, 0)));
+//                   MeshPC.VertexBufferSlot = CubeMesh.VertexBuffer.BindlessSlot;
+//                   MeshPC.InstanceBufferSlot = Batch.Buffer().BindlessSlot;
+//                   MeshPC.LightDirWS = float3(-0.5f, -0.8f, -0.3f);
+//                   MeshPC.AlbedoTint = float4(1.f, 0.5f, 0.5f, 1.0f);
+//
+//                   C.Bind(MeshPipeline);
+//                   C.SetViewportFull();
+//                   C.Push(MeshPC);
+//                   C.BindIndexBuffer(CubeMesh.IndexBuffer, IndexTypeFor(CubeMesh));
+//
+//                   C.DrawIndexed(CubeMesh.IndexCount, Count);
+//               });
+//
+//             rg.Compute("Blur")
+//               .Read(ColorTex)
+//               .Write(FinalCompTex)
+//               .Execute([&](helio::rhi::CommandList& C)
+//               {
+//                   C.Bind(Blur);
+//                   struct PC
+//                   {
+//                       uint32_t InputSlot, OutputSlot, SamplerSlot;
+//                       int Radius;
+//                       float Width;
+//                       float Height;
+//                   };
+//
+//                   PC pc{ColorTex.SampledSlot, FinalCompTex.StorageSlot, 0/* kSamplerLinearWrap */, 2, static_cast<float>(Win.Width()), static_cast<float>(Win.Height())};
+//                   C.Push(pc);
+//                   C.Dispatch2D(Win.Width(), Win.Height(), 8, 8);
+//               });
+//
+//             rg.Graphics("Final")
+//               .Color(Last)
+//               .Read(FinalCompTex)
+//               .Execute([&](helio::rhi::CommandList& C)
+//               {
+//                   C.Bind(BlitPipe);
+//                   struct PC
+//                   {
+//                       uint32_t Tex, Sampler;
+//                   };
+//
+//                   PC pc{FinalCompTex.SampledSlot, 1 /* kSamplerLinearWrap */};
+//                   C.Push(pc);
+//
+//                   C.Draw(3);
+//               });
+//
+//             /*struct PC {
+//                 uint  InputSlot;        // SampledSlot of the source texture
+//                 uint  OutputSlot;       // StorageSlot of the destination texture (same size)
+//                 uint  SamplerSlot;      // typically kSamplerLinearClamp
+//                 int   Radius;           // odd half-extent: radius=2 means 5x5 kernel
+//                 float Width;
+//                 float Height;
+//             };*/
+//
+//             // Queue overlay text + schedule its pass.
+//             const double NowSec = FrameClock.SecondsSinceStart();
+//             const double CpuMs = (NowSec - FrameStartSec) * 1000.0;
+//             Hud.DrawStats(CpuMs, RHI.LastFrameGpuMs(), rg.Passes());
+//             Hud.Render(rg, Last, static_cast<uint32_t>(Win.Width()), static_cast<uint32_t>(Win.Height()));
+//
+//             rg.Present(Last);
+//             rg.Execute();
+//
+//             RHI.EndFrame();
+//         }
+//     }
+//
+//     RHI.WaitIdle();
+//     log::Shutdown();
+//
+//     return 0;
+// }

@@ -63,12 +63,16 @@ class PassBuilder {
 public:
     PassBuilder& Read(TextureHandle h);
     PassBuilder& Write(TextureHandle h);
+
+    
     PassBuilder& Color(TextureHandle h);
     PassBuilder& Color(TextureHandle h, float r, float g, float b, float a);
+    
     /// Color attachment whose existing contents are preserved (LoadOp::Load).
     /// Use when drawing on top of a previous pass's output (e.g. the overlay
     /// pass renders over the scene without clearing it).
     PassBuilder& ColorLoad(TextureHandle h);
+    
     PassBuilder& Depth(TextureHandle h, float ClearDepth = 0.0f);
     /// Set the user callback for this pass. Required.
     void Execute(std::function<void(CommandList&)> Fn);
