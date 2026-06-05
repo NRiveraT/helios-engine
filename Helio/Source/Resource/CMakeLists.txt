@@ -7,6 +7,7 @@ helio_add_module(Resource
         Mesh.cpp
         MeshPipeline.cpp
         InstanceBatch.cpp
+        Material.h
     PUBLIC_LINK
         Helio.Core
         Helio.RHI

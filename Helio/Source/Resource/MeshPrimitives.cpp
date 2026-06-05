@@ -47,14 +47,17 @@ MeshData Cube(float Size) {
         {-1,0,0,  0,0,+1,
          {-H,-H,-H,-H}, { H, H,-H,-H}, { H,-H,-H, H},
          {0,1,1,0}, {1,1,0,0}},
-        // +Y face — normal (0,+1,0), tangent (+1,0,0)
+        // +Y face — normal (0,+1,0), tangent (+1,0,0).
+        // Winding is CCW when viewed from above (looking down -Y), matching
+        // the same "outward-CCW" convention used by the X/Z faces and by the
+        // `Plane` primitive below.
         {0,+1,0, +1,0,0,
-         {-H, H, H,-H}, { H, H, H, H}, {-H,-H, H, H},
-         {0,1,1,0}, {1,1,0,0}},
-        // -Y face — normal (0,-1,0), tangent (+1,0,0)
+         {-H,-H, H, H}, { H, H, H, H}, {-H, H, H,-H},
+         {0,0,1,1}, {1,0,0,1}},
+        // -Y face — normal (0,-1,0), tangent (+1,0,0). CCW from below.
         {0,-1,0, +1,0,0,
-         {-H, H, H,-H}, {-H,-H,-H,-H}, { H, H,-H,-H},
-         {0,1,1,0}, {1,1,0,0}},
+         {-H,-H, H, H}, {-H,-H,-H,-H}, { H,-H,-H, H},
+         {0,0,1,1}, {1,0,0,1}},
         // +Z face — normal (0,0,+1), tangent (+1,0,0)
         {0,0,+1, +1,0,0,
          {-H, H, H,-H}, {-H,-H, H, H}, { H, H, H, H},
@@ -131,9 +134,12 @@ MeshData Sphere(float Radius, uint32_t Segments, uint32_t Rings) {
             const uint32_t B = (R + 0) * Stride + S + 1;
             const uint32_t C = (R + 1) * Stride + S;
             const uint32_t D = (R + 1) * Stride + S + 1;
-            // CCW front-facing.
-            M.Indices.push_back(A); M.Indices.push_back(C); M.Indices.push_back(B);
-            M.Indices.push_back(B); M.Indices.push_back(C); M.Indices.push_back(D);
+            // Outward-CCW: walk A → B → C and B → D → C so cross(E1,E2)
+            // points AWAY from the sphere center. Matches the cube and
+            // plane convention; previous order had the cross pointing
+            // inward, so the sphere rendered with inverted lighting.
+            M.Indices.push_back(A); M.Indices.push_back(B); M.Indices.push_back(C);
+            M.Indices.push_back(B); M.Indices.push_back(D); M.Indices.push_back(C);
         }
     }
 
@@ -241,12 +247,14 @@ MeshData Cylinder(float Radius, float Height, uint32_t Segments) {
                                       0.5f + 0.5f * Cs, 0.5f + 0.5f * Sn,
                                       1.0f, 0.0f, 0.0f, 1.0f));
     }
+    // Outward-CCW from above: walk Center → B → A so the cross product
+    // points +Y. (Center → A → B winds inward, giving -Y.)
     for (uint32_t S = 0; S < Segments; ++S) {
         const uint32_t A = TopRim0 + S;
         const uint32_t B = TopRim0 + ((S + 1) % Segments);
         M.Indices.push_back(TopCenter);
-        M.Indices.push_back(A);
         M.Indices.push_back(B);
+        M.Indices.push_back(A);
     }
 
     // ---- Bottom cap (-Y) ------------------------------------------------
@@ -263,13 +271,14 @@ MeshData Cylinder(float Radius, float Height, uint32_t Segments) {
                                       0.5f + 0.5f * Cs, 0.5f + 0.5f * Sn,
                                       1.0f, 0.0f, 0.0f, 1.0f));
     }
-    // CCW from below = reverse winding.
+    // Outward-CCW from below: walk Center → A → B so the cross product
+    // points -Y. (Center → B → A winds inward, giving +Y.)
     for (uint32_t S = 0; S < Segments; ++S) {
         const uint32_t A = BotRim0 + S;
         const uint32_t B = BotRim0 + ((S + 1) % Segments);
         M.Indices.push_back(BotCenter);
-        M.Indices.push_back(B);
         M.Indices.push_back(A);
+        M.Indices.push_back(B);
     }
 
     M.RecomputeBounds();

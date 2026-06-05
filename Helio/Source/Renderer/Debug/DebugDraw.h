@@ -196,6 +196,11 @@ namespace helio::debug {
 void SetInstance(render::debug::DebugDraw* Instance);
 [[nodiscard]] render::debug::DebugDraw* GetInstance();
 
+/// Decay submission lifetimes by `DeltaSeconds`. Items with `Lifetime <= 0`
+/// after this call are evicted. Call ONCE per frame (typically next to your
+/// world tick). Without this, lifetime-0 submissions live forever.
+void Tick(float DeltaSeconds);
+
 void Line  (float3 P0, float3 P1, uint32_t RGBA, float Lifetime = 0.0f, const char* Category = "Default");
 void Box   (float3 Min, float3 Max, uint32_t RGBA, float Lifetime = 0.0f, const char* Category = "Default");
 void Sphere(float3 Center, float Radius, uint32_t RGBA, float Lifetime = 0.0f, const char* Category = "Default");

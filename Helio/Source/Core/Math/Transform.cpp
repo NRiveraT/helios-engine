@@ -54,6 +54,36 @@ float4 QuatConjugate(float4 Q) {
     return float4(-float(Q.x), -float(Q.y), -float(Q.z), float(Q.w));
 }
 
+float3 QuatRotateVector(float4 Q, float3 V) {
+    // v' = 2(u·v)u + (w² − u·u)v + 2w(u×v), where u = q.xyz, w = q.w.
+    // Algebraic expansion of q*v*q^-1 — same identity Unreal's
+    // `FQuat::RotateVector` uses.
+    const float ux = float(Q.x), uy = float(Q.y), uz = float(Q.z);
+    const float vx = float(V.x), vy = float(V.y), vz = float(V.z);
+    const float w  = float(Q.w);
+
+    const float udotv = ux*vx + uy*vy + uz*vz;
+    const float udotu = ux*ux + uy*uy + uz*uz;
+    const float k1    = 2.0f * udotv;
+    const float k2    = w*w - udotu;
+    const float k3    = 2.0f * w;
+
+    // u × v
+    const float cx = uy*vz - uz*vy;
+    const float cy = uz*vx - ux*vz;
+    const float cz = ux*vy - uy*vx;
+
+    return float3(
+        k1*ux + k2*vx + k3*cx,
+        k1*uy + k2*vy + k3*cy,
+        k1*uz + k2*vz + k3*cz
+    );
+}
+
+float3 QuatUnrotateVector(float4 Q, float3 V) {
+    return QuatRotateVector(QuatConjugate(Q), V);
+}
+
 float4 QuatSlerp(float4 A, float4 B, float T) {
     float ax = float(A.x), ay = float(A.y), az = float(A.z), aw = float(A.w);
     float bx = float(B.x), by = float(B.y), bz = float(B.z), bw = float(B.w);
@@ -150,6 +180,13 @@ void Transform::RotateAxis(float3 Axis, float Radians) {
 void Transform::RotateEuler(float Pitch, float Yaw, float Roll) {
     Rotate(QuatFromEuler(Pitch, Yaw, Roll));
 }
+
+float3 Transform::GetForward() const noexcept { return QuatRotateVector(Rotation, float3(0.0f, 0.0f, 1.0f)); }
+float3 Transform::GetRight()   const noexcept { return QuatRotateVector(Rotation, float3(1.0f, 0.0f, 0.0f)); }
+float3 Transform::GetUp()      const noexcept { return QuatRotateVector(Rotation, float3(0.0f, 1.0f, 0.0f)); }
+
+float3 Transform::RotateVector(float3 LocalDir)  const noexcept { return QuatRotateVector(Rotation, LocalDir); }
+float3 Transform::UnrotateVector(float3 WorldDir) const noexcept { return QuatUnrotateVector(Rotation, WorldDir); }
 
 void Transform::ScaleBy(float3 S) noexcept {
     Scale = float3(

@@ -11,25 +11,31 @@ namespace helio::gameplay
     {
     public:
 
-        explicit Actor(HelioWorld& W) : m_world(&W) {}
+        explicit Actor(HelioWorld& W) : m_World(&W) {}
         
-        [[nodiscard]] Transform& GetTransform() { return m_transform; }
-        [[nodiscard]] const Transform& GetTransform() const { return m_transform; }
-        void SetTransform(const Transform& T) { m_transform = T; }
+        [[nodiscard]] Transform& GetTransform() { return m_Transform; }
+        [[nodiscard]] const Transform& GetTransform() const { return m_Transform; }
+        void SetTransform(const Transform& T) { m_Transform = T; }
 
-        [[nodiscard]] HelioWorld& GetWorld() const { return *m_world; }
+        [[nodiscard]] HelioWorld& GetWorld() const { return *m_World; }
         
         virtual void BeginPlay() {}
         virtual void Tick(float DeltaTime) {}
         virtual void EndPlay() {}
 
+        virtual void OnRender() {}
+        
         void EnableTick() {}
         void DisableTick() {}
     
-        bool IsTickEnabled() const noexcept { return false; } 
-    
+        bool IsTickEnabled() const noexcept { return false; }
+
+        float3 GetActorForwardVector() const noexcept { return m_Transform.GetForward(); }
+        float3 GetActorRightVector()   const noexcept { return m_Transform.GetRight(); }
+        float3 GetActorUpVector()      const noexcept { return m_Transform.GetUp(); }
+
     protected:
-        HelioWorld* m_world = nullptr;
-        Transform m_transform = Transform();
+        HelioWorld* m_World = nullptr;
+        Transform m_Transform = Transform();
     };
 }

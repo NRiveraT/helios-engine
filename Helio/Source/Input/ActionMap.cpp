@@ -12,13 +12,21 @@ void ActionMap::BindMouseButton(std::string_view Action, MouseButton B) {
 
 std::string_view ActionMap::Resolve(const InputEvent& E) const {
     if (E.Type == InputEvent::Kind::Key) {
-        auto It = m_keyBindings.find(E.KeyEv.Code);
-        if (It != m_keyBindings.end()) return It->second;
+        return ResolveKey(E.KeyEv.Code);
     } else if (E.Type == InputEvent::Kind::MouseButton) {
-        auto It = m_mouseBindings.find(E.MouseEv.Button);
-        if (It != m_mouseBindings.end()) return It->second;
+        return ResolveMouseButton(E.MouseEv.Button);
     }
     return {};
+}
+
+std::string_view ActionMap::ResolveKey(Key K) const {
+    auto It = m_keyBindings.find(K);
+    return (It != m_keyBindings.end()) ? std::string_view{It->second} : std::string_view{};
+}
+
+std::string_view ActionMap::ResolveMouseButton(MouseButton B) const {
+    auto It = m_mouseBindings.find(B);
+    return (It != m_mouseBindings.end()) ? std::string_view{It->second} : std::string_view{};
 }
 
 void ActionMap::Clear() {

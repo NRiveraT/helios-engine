@@ -348,6 +348,9 @@ namespace { render::debug::DebugDraw* g_instance = nullptr; }
 void SetInstance(render::debug::DebugDraw* Instance) { g_instance = Instance; }
 render::debug::DebugDraw* GetInstance() { return g_instance; }
 
+void Tick(float DeltaSeconds) {
+    if (g_instance) g_instance->Tick(DeltaSeconds);
+}
 void Line(float3 P0, float3 P1, uint32_t RGBA, float Lifetime, const char* Category) {
     if (g_instance) g_instance->AddLine(P0, P1, RGBA, Lifetime, Category);
 }

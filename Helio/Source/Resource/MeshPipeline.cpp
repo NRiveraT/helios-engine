@@ -27,8 +27,7 @@ rhi::PipelineHandle CreateMeshInstancedPipeline(
 
     rhi::PipelineHandle H = Dev.CreateGraphicsPipeline(Pd);
     if (!H.IsValid()) {
-        HELIO_LOG_WARN("Resource", "CreateMeshInstancedPipeline: shader load failed "
-                                   "(expected '{}')", Pd.ShaderPath);
+        HELIO_LOG_WARN("Resource", "CreateMeshInstancedPipeline: shader load failed " "(expected '{}')", Pd.ShaderPath);
     }
     return H;
 }

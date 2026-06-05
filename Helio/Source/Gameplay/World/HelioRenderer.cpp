@@ -4,17 +4,17 @@
 #include <Logging/Log.h>
 #include <Profile/Profile.h>
 
+#include "Actors/DirectionalLight.h"
 #include "Gameplay/World/HelioWorld.h"
-#include "Interfaces/IRenderable.h"
 
 namespace helio::gameplay
 {
-    HelioRenderer::HelioRenderer(rhi::Device& RHI, const EngineConfig& Config) : m_rhi(&RHI), m_Overlay(*m_rhi, rhi::Format::RGBA8_SRGB), m_instanceBatch(*m_rhi, 1024)
+    HelioRenderer::HelioRenderer(rhi::Device& RHI, const core::EngineConfig& Config) : m_RHI(&RHI), m_Overlay(*m_RHI, rhi::Format::RGBA8_SRGB), m_DebugDraw(*m_RHI, rhi::Format::RGBA8_SRGB, &m_Overlay), m_InstanceBatch(*m_RHI, 1024)
     {
         m_Width = Config.Width;
         m_Height = Config.Height;
 
-        m_colorTexture = m_rhi->CreateTexture({
+        m_ColorTexture = m_RHI->CreateTexture({
             .Width = static_cast<uint32_t>(Config.Width),
             .Height = static_cast<uint32_t>(Config.Height),
             .Fmt = rhi::Format::RGBA8_SRGB,
@@ -22,7 +22,7 @@ namespace helio::gameplay
             .DebugName = "ColorTexture"
         });
 
-        m_depthTexture = m_rhi->CreateTexture({
+        m_DepthTexture = m_RHI->CreateTexture({
             .Width = static_cast<uint32_t>(Config.Width),
             .Height = static_cast<uint32_t>(Config.Height),
             .Fmt = rhi::Format::D32_SFLOAT,
@@ -30,8 +30,8 @@ namespace helio::gameplay
             .DebugName = "DepthTexture"
         });
 
-        m_meshPipeline = resource::CreateMeshInstancedPipeline(
-            *m_rhi, {
+        m_MeshPipeline = resource::CreateMeshInstancedPipeline(
+            *m_RHI, {
                 .ColorFormat = rhi::Format::RGBA8_SRGB,
                 .DepthFormat = rhi::Format::D32_SFLOAT,
                 .Cull = rhi::CullMode::Back,
@@ -39,112 +39,158 @@ namespace helio::gameplay
                 .DepthWrite = true,
                 .DebugName = "Mesh Pipeline"
             });
+
+        // Register this renderer's DebugDraw as the global singleton so any
+        // gameplay code can call `helio::debug::Line/Box/Sphere/Text2D/Text3D`
+        // without holding a renderer reference.
+        helio::debug::SetInstance(&m_DebugDraw);
     }
 
     HelioRenderer::~HelioRenderer()
     {
-        m_rhi->DestroyTexture(m_colorTexture);
-        m_rhi->DestroyTexture(m_depthTexture);
+        if (helio::debug::GetInstance() == &m_DebugDraw)
+        {
+            helio::debug::SetInstance(nullptr);
+        }
+        m_RHI->DestroyTexture(m_ColorTexture);
+        m_RHI->DestroyTexture(m_DepthTexture);
     }
 
     void HelioRenderer::Render()
     {
         HELIO_PROFILE_ZONE("Rendering")
 
-        if (render::CommandList* Cmd = m_rhi->BeginFrame())
-        {
-            render::RenderGraph rg(*m_rhi, *Cmd);
-            
-            for (auto& A : m_world->GetWorldActors())
-            {
-                if (auto R = dynamic_cast<IRenderable*>(A.get()))
-                {
-                    R->OnRender();
-                }
-            }
-            
-            PreRenderScene(&rg);
-            RenderScene(&rg);
-            
-            RenderOverlay(&rg);
+        m_StartFrameSec = m_World->Engine().EngineClock().SecondsSinceStart();
 
-            rg.Present(m_colorTexture);
+        if (render::CommandList* Cmd = m_RHI->BeginFrame())
+        {
+            render::RenderGraph rg(*m_RHI, *Cmd);
+
+            for (auto& A : m_World->GetWorldActors())
+            {
+                A->OnRender();
+            }
+
+            DrawStaticMeshes(&rg);
+
+            DrawDebug(&rg);
+            DrawOverlay(&rg);
+
+            rg.Present(m_ColorTexture);
             rg.Execute();
-            
-            m_rhi->EndFrame();
-            m_pending.clear(); 
+
+            m_RHI->EndFrame();
+            m_PendingInstances.clear();
         }
     }
 
     void HelioRenderer::WaitIdle() const
     {
-        m_rhi->WaitIdle();
+        m_RHI->WaitIdle();
     }
 
-    void HelioRenderer::PreRenderScene(render::RenderGraph* rg)
-    {
-        HELIO_PROFILE_ZONE("PreRenderScene")
-    }
-
-    void HelioRenderer::RenderScene(render::RenderGraph* rg)
+    void HelioRenderer::DrawStaticMeshes(render::RenderGraph* rg)
     {
         HELIO_PROFILE_ZONE("RenderScene")
 
+        if (m_PendingInstances.empty() || m_Camera == nullptr)
+        {
+            return;
+        }
+
         rg->Graphics("Static Meshes")
-          .Color(m_colorTexture, 0.2, 0.2, 0.2, 1.0)
-          .Depth(m_depthTexture, 0.0f)
+          .Color(m_ColorTexture, 0.1274, 0.3005, 0.8469, 1.0)
+          .Depth(m_DepthTexture, 0.0f)
           .Execute([&](rhi::CommandList& Cmd)
           {
-              Cmd.Bind(m_meshPipeline);
+              Cmd.Bind(m_MeshPipeline);
               Cmd.SetViewportFull();
 
-              float4x4 Projection = math::PerspectiveReverseZLH(float1(45.f), static_cast<float>(m_Width) / static_cast<float>(m_Height), 0.01f);
-              float4x4 LookAt = math::LookAtLH(float3(0, 0, -10), float3(0, 0, 0), float3(0, 1, 0));
-
               resource::MeshInstancedPushConsts PC{};
-              PC.ViewProj = hlslpp::mul(Projection, LookAt);
-              PC.LightDirWS = float3(0.57735f, 0.57735f, 0.57735f);
-              PC.AlbedoTint = float4(1.0f, 1.0f, 1.0f, 1.0f);
+              PC.ViewProj = m_Camera->GetViewProjection();
+              PC.CameraPosWS = m_Camera->GetTransform().Position;
 
-              for (auto& [meshId, instances] : m_pending)
+              DirectionalLight* DirLight = m_World->GetActorsByClass<DirectionalLight>();
+              PC.LightDirWS = float4(DirLight->GetActorForwardVector(), DirLight->Intensity);
+
+              // Pack EVERY mesh's instances into ONE buffer write, tracking
+              // each mesh's slice as (firstInstance, instanceCount). If we
+              // wrote per-mesh inside the draw loop, each Write() would
+              // clobber the buffer at offset 0 before the GPU executed the
+              // previous draw — every mesh would end up reading the last
+              // group's transforms.
+              struct MeshDraw
               {
-                  HELIO_PROFILE_ZONE("SubmitMesh")
-                  if (instances.empty())
-                  {
-                      continue;
-                  }
+                  resource::Mesh Mesh;
+                  resource::Material Material;
 
-                  const resource::Mesh& mesh = instances[0].Mesh;
+                  uint32_t FirstInstance;
+                  uint32_t InstanceCount;
+              };
 
-                  m_instanceBatch.Begin();
+              std::vector<MeshDraw> Draws;
+              Draws.reserve(m_PendingInstances.size());
+
+              m_InstanceBatch.Begin();
+              for (auto& [meshId, instances] : m_PendingInstances)
+              {
+                  HELIO_PROFILE_ZONE("StageMesh")
+                  if (instances.empty()) continue;
+
+                  const uint32_t First = m_InstanceBatch.StagingSize();
                   for (const auto& instance : instances)
                   {
                       resource::MeshInstance MI{};
                       MI.Transform = instance.World;
-                      m_instanceBatch.Add(MI);
-                  }
-                  uint32_t instanceCount = m_instanceBatch.End();
 
-                  PC.VertexBufferSlot = mesh.VertexBuffer.BindlessSlot;
-                  PC.InstanceBufferSlot = m_instanceBatch.Buffer().BindlessSlot;
+                      m_InstanceBatch.Add(MI);
+                  }
+                  const uint32_t Count = m_InstanceBatch.StagingSize() - First;
+
+                  Draws.push_back({instances.front().Mesh, instances.front().Mesh.m_Material, First, Count});
+              }
+              m_InstanceBatch.End(); // single upload covering all meshes
+
+              PC.InstanceBufferSlot = m_InstanceBatch.Buffer().BindlessSlot;
+
+              for (const auto& D : Draws)
+              {
+                  HELIO_PROFILE_ZONE("DrawMesh")
+                  PC.VertexBufferSlot = D.Mesh.VertexBuffer.BindlessSlot;
+                  PC.InstanceBase = D.FirstInstance;
+                  PC.Albedo = D.Material.AlbedoTint;
+                  PC.Roughness = D.Material.Roughness;
+                  PC.Metallic = D.Material.Metallic;
+                  
                   Cmd.Push(PC);
-                  Cmd.BindIndexBuffer(mesh.IndexBuffer, resource::IndexTypeFor(mesh));
-                  Cmd.DrawIndexed(mesh.IndexCount, instanceCount);
+                  Cmd.BindIndexBuffer(D.Mesh.IndexBuffer, resource::IndexTypeFor(D.Mesh));
+                  // No firstInstance here — Slang's SV_InstanceID is per-draw
+                  // and ignores it. The shader does `InstanceBase + InstanceID`
+                  // internally to pick the right transform.
+                  Cmd.DrawIndexed(D.Mesh.IndexCount, D.InstanceCount);
               }
           });
     }
 
-    void HelioRenderer::RenderPostProcess(render::RenderGraph* rg)
+    void HelioRenderer::DrawPostProcess(render::RenderGraph* rg)
     {
     }
 
-    void HelioRenderer::RenderUI(render::RenderGraph* rg)
+    void HelioRenderer::DrawDebug(render::RenderGraph* rg)
+    {
+        m_DebugDraw.Render(*rg, m_ColorTexture, m_Camera->GetViewProjection(), m_Width, m_Height);
+    }
+
+    void HelioRenderer::DrawUI(render::RenderGraph* rg)
     {
     }
 
-    void HelioRenderer::RenderOverlay(render::RenderGraph* rg)
+    void HelioRenderer::DrawOverlay(render::RenderGraph* rg)
     {
-        m_Overlay.DrawStats(0, m_rhi->LastFrameGpuMs(), rg->Passes());
-        m_Overlay.Render(*rg, m_colorTexture, m_Width, m_Height);
+        const double NowSec = m_World->Engine().EngineClock().SecondsSinceStart();
+        const double CpuMs = (NowSec - m_StartFrameSec) * 1000.0;
+
+        m_Overlay.DrawStats(CpuMs, m_RHI->LastFrameGpuMs(), rg->Passes());
+        m_Overlay.Render(*rg, m_ColorTexture, m_Width, m_Height);
     }
 }

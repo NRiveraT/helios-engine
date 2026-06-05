@@ -29,6 +29,8 @@
 #include <cstdint>
 #include <unordered_map>
 
+#include "Material.h"
+
 namespace helio::rhi { class Device; }
 
 namespace helio::resource {
@@ -58,6 +60,8 @@ struct Mesh {
 
     MeshStats          Stats{};
 
+    Material m_Material;
+    
     [[nodiscard]] constexpr bool IsValid() const noexcept { return Id != 0; }
 };
 

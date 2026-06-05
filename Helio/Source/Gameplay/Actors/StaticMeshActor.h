@@ -8,18 +8,18 @@ using namespace helio::resource;
 
 namespace helio::gameplay
 {
-    class StaticMeshActor : public Actor, public IRenderable
+    class StaticMeshActor : public Actor
     {
     public:
-        explicit StaticMeshActor(HelioWorld& W);
-        
-        [[nodiscard]] Mesh& GetMesh() { return m_mesh; }
-        void SetMesh(Mesh M) { m_mesh = M; }
-        
+        explicit StaticMeshActor(HelioWorld& W, Mesh Mesh);
+
+        [[nodiscard]] Mesh& GetMesh() { return m_Mesh; }
+        Material& GetMaterial() { return m_Mesh.m_Material; }
+        void SetMesh(const Mesh& M) { m_Mesh = M; }
+
         void OnRender() override;
-        void SubmitToRenderQueue() override;
 
     protected:
-        Mesh m_mesh;
+        Mesh m_Mesh;
     };
 }

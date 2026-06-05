@@ -34,6 +34,26 @@ struct Transform {
     /// same result as `parent.ToMatrix() * child.ToMatrix() * v_col`.
     [[nodiscard]] Transform operator*(const Transform& Child) const;
 
+    // ---- Basis axes (world-space) ------------------------------------------
+    //
+    // Convention: +X right, +Y up, +Z forward (left-handed). Matches the LH
+    // perspective / look-at builders in `Math.h`. These mirror UE's
+    // `FQuat::GetAxisX/Y/Z` — the rotation is applied to the canonical basis
+    // vector via `QuatRotateVector`, avoiding the full 4x4 matrix build.
+
+    /// Local +Z (forward) axis expressed in world space.
+    [[nodiscard]] float3 GetForward() const noexcept;
+    /// Local +X (right) axis expressed in world space.
+    [[nodiscard]] float3 GetRight() const noexcept;
+    /// Local +Y (up) axis expressed in world space.
+    [[nodiscard]] float3 GetUp() const noexcept;
+
+    /// Rotate a local-space direction into world space (mirrors
+    /// `FTransform::TransformVectorNoScale` / `FQuat::RotateVector`).
+    [[nodiscard]] float3 RotateVector(float3 LocalDir) const noexcept;
+    /// Inverse: rotate a world-space direction back into the local frame.
+    [[nodiscard]] float3 UnrotateVector(float3 WorldDir) const noexcept;
+
     // ---- In-place mutators (cheaper than building matrices) ----------------
 
     void Translate(float3 Delta) noexcept;
@@ -77,6 +97,16 @@ struct Transform {
 [[nodiscard]] float4 QuatNormalize(float4 Q);
 
 [[nodiscard]] float4 QuatConjugate(float4 Q);
+
+/// Rotate `V` by quaternion `Q` (i.e. `q * v * q^-1`). The kernel behind
+/// `Transform::GetForward/Right/Up` and `Transform::RotateVector`. Mirrors
+/// `FQuat::RotateVector` in Unreal — ~12 mul, faster than building the
+/// rotation matrix and multiplying.
+[[nodiscard]] float3 QuatRotateVector(float4 Q, float3 V);
+
+/// Rotate `V` by the inverse of `Q` (i.e. into the local frame). Mirrors
+/// `FQuat::UnrotateVector`.
+[[nodiscard]] float3 QuatUnrotateVector(float4 Q, float3 V);
 
 /// Spherical linear interpolation. `T` in `[0, 1]`. Robust against opposite-
 /// signed quaternions (picks the shortest arc).

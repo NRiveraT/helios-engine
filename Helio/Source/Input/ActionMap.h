@@ -32,6 +32,12 @@ public:
     /// Returns empty `string_view` if no binding matches.
     [[nodiscard]] std::string_view Resolve(const InputEvent& E) const;
 
+    /// Direct lookups — same as `Resolve()` but skip the InputEvent shape.
+    /// Used by `Dispatcher::FireHeld()` and `Dispatcher::IsActionHeld()` to
+    /// translate currently-held keys/buttons into action names.
+    [[nodiscard]] std::string_view ResolveKey(Key K) const;
+    [[nodiscard]] std::string_view ResolveMouseButton(MouseButton B) const;
+
     /// Drop all bindings.
     void Clear();
 

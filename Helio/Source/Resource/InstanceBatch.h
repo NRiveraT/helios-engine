@@ -76,6 +76,13 @@ public:
     /// Number of instances written by the last `End()`.
     [[nodiscard]] uint32_t Count() const noexcept { return m_count; }
 
+    /// Current staging size mid-frame (between Begin and End). Useful when
+    /// packing multiple meshes into one batch and tracking their offsets to
+    /// feed `DrawIndexed(..., FirstInstance)`.
+    [[nodiscard]] uint32_t StagingSize() const noexcept {
+        return static_cast<uint32_t>(m_staging.size());
+    }
+
     /// Capacity passed to the constructor.
     [[nodiscard]] uint32_t Capacity() const noexcept { return m_capacity; }
 

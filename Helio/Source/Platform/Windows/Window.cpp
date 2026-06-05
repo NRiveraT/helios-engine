@@ -156,6 +156,18 @@ Window::~Window() {
     }
 }
 
+void Window::SetMouseCaptured(bool Captured) noexcept {
+    if (!m_window || m_mouseCaptured == Captured) return;
+
+    if (!SDL_SetWindowRelativeMouseMode(m_window, Captured)) {
+        HELIO_LOG_WARN("Platform", "SDL_SetWindowRelativeMouseMode({}) failed: {}",
+                       Captured, SDL_GetError());
+        return;
+    }
+    m_mouseCaptured = Captured;
+    HELIO_LOG_DEBUG("Platform", "Mouse capture {}", Captured ? "ON" : "OFF");
+}
+
 bool Window::PumpEvents() {
     HELIO_PROFILE_ZONE("Window::PumpEvents");
 
@@ -174,28 +186,26 @@ bool Window::PumpEvents() {
                 break;
 
             case SDL_EVENT_KEY_DOWN:
-                HELIO_LOG_DEBUG("Input", "Key down: {}", KeyName(Ev.key.key));
+                // HELIO_LOG_DEBUG("Input", "Key down: {}", KeyName(Ev.key.key));
                 Out.Type = input::InputEvent::Kind::Key;
                 Out.KeyEv = { SDLKeycodeToHelio(Ev.key.key), input::KeyState::Pressed, Ev.key.repeat != 0 };
                 break;
 
             case SDL_EVENT_KEY_UP:
-                HELIO_LOG_DEBUG("Input", "Key up: {}", KeyName(Ev.key.key));
+                // HELIO_LOG_DEBUG("Input", "Key up: {}", KeyName(Ev.key.key));
                 Out.Type = input::InputEvent::Kind::Key;
                 Out.KeyEv = { SDLKeycodeToHelio(Ev.key.key), input::KeyState::Released, false };
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                HELIO_LOG_DEBUG("Input", "Mouse button {} down at ({:.0f},{:.0f})",
-                                static_cast<int>(Ev.button.button), Ev.button.x, Ev.button.y);
+                // HELIO_LOG_DEBUG("Input", "Mouse button {} down at ({:.0f},{:.0f})", static_cast<int>(Ev.button.button), Ev.button.x, Ev.button.y);
                 Out.Type = input::InputEvent::Kind::MouseButton;
                 Out.MouseEv = { SDLMouseButtonToHelio(Ev.button.button), input::KeyState::Pressed,
                                 Ev.button.x, Ev.button.y };
                 break;
 
             case SDL_EVENT_MOUSE_BUTTON_UP:
-                HELIO_LOG_DEBUG("Input", "Mouse button {} up at ({:.0f},{:.0f})",
-                                static_cast<int>(Ev.button.button), Ev.button.x, Ev.button.y);
+                // HELIO_LOG_DEBUG("Input", "Mouse button {} up at ({:.0f},{:.0f})", static_cast<int>(Ev.button.button), Ev.button.x, Ev.button.y);
                 Out.Type = input::InputEvent::Kind::MouseButton;
                 Out.MouseEv = { SDLMouseButtonToHelio(Ev.button.button), input::KeyState::Released,
                                 Ev.button.x, Ev.button.y };

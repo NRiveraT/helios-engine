@@ -4,16 +4,13 @@
 
 namespace helio::gameplay
 {
-    StaticMeshActor::StaticMeshActor(HelioWorld& W) : Actor(W)
-    {}
+    StaticMeshActor::StaticMeshActor(HelioWorld& W, Mesh Mesh) : Actor(W)
+    {
+        SetMesh(Mesh);
+    }
 
     void StaticMeshActor::OnRender()
     {
-        m_world->Engine().Renderer().SubmitMesh(m_mesh, GetTransform());
-    }
-
-    void StaticMeshActor::SubmitToRenderQueue()
-    {
-        m_world->Engine().Renderer().SubmitMesh(m_mesh, GetTransform());
+        m_World->Engine().Renderer().SubmitMesh(m_Mesh, GetTransform());
     }
 }

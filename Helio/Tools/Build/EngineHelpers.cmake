@@ -29,6 +29,8 @@ function(helio_add_module MODULE_NAME)
 
     add_library(${TARGET_NAME} STATIC ${HELIO_MOD_SOURCES})
 
+    source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${HELIO_MOD_SOURCES})
+    
     # PUBLIC include base is the Source/ root, so callers (and the module itself)
     # use <Core/...>, <RHI/...>, <Renderer/...> uniformly. The module's own
     # directory is added too so internal sources can use short paths like

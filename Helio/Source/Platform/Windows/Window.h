@@ -54,9 +54,35 @@ public:
     ///   Win.Dispatcher().OnActionPressed("Quit", [&]{ Win.RequestClose(); });
     [[nodiscard]] input::Dispatcher& Dispatcher() noexcept { return m_dispatcher; }
 
+    // -------------------------------------------------------------------------
+    // Mouse capture / relative mode
+    //
+    // For free-look / fly-cam style controls you need relative mouse mode:
+    // - The OS cursor is hidden
+    // - The cursor stays locked to the window (can't drift to other monitors
+    //   or hit screen edges)
+    // - Mouse events emit DeltaX/DeltaY but never absolute X/Y movement
+    // - You can keep dragging in one direction forever, no edge-clamp stalls
+    //
+    // Without this, mouse-look stops the moment the cursor reaches the screen
+    // edge — you can't sustain a long camera rotation.
+    //
+    // Game code toggles capture as needed (e.g. press RMB → SetMouseCaptured(true)
+    // → release RMB → SetMouseCaptured(false)). Esc-to-uncapture is also a
+    // common pattern; wire your own action handler for that.
+    // -------------------------------------------------------------------------
+
+    /// Enable/disable relative mouse mode + cursor hiding. Idempotent (safe
+    /// to call repeatedly with the same value).
+    void SetMouseCaptured(bool Captured) noexcept;
+
+    /// True if relative mouse mode is currently active.
+    [[nodiscard]] bool IsMouseCaptured() const noexcept { return m_mouseCaptured; }
+
 private:
     SDL_Window* m_window{nullptr};
     bool m_shouldClose{false};
+    bool m_mouseCaptured{false};
     input::Dispatcher m_dispatcher;
 };
 

@@ -45,6 +45,20 @@ namespace helio::gameplay
             return Raw;
         }
 
+        template <typename T>
+        [[nodiscard]] T* GetActorsByClass()
+        {
+            for (auto& actor : m_actors)
+            {
+                if (T* r = dynamic_cast<T*>(actor.get()))
+                {
+                    return r;
+                }
+            }
+            
+            return nullptr;
+        }
+        
         void Startup();
 
         /// Per-phase tick — game loop calls this from main(). Phase enum lives

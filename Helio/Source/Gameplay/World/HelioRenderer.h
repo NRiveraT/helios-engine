@@ -3,6 +3,8 @@
 #include <Mesh.h>
 #include <RenderGraph.h>
 #include <Overlay/Overlay.h>
+#include <Debug/DebugDraw.h>
+#include "Actors/Camera.h"
 #include "Types/EngineConfig.h"
 #include "Types/PendingInstance.h"
 
@@ -13,44 +15,48 @@ namespace helio::gameplay
     class HelioRenderer
     {
     public:
-        explicit HelioRenderer(rhi::Device& RHI, const EngineConfig& Config);
+        explicit HelioRenderer(rhi::Device& RHI, const core::EngineConfig& Config);
         ~HelioRenderer();
 
-        void SetWorld(HelioWorld& World) { m_world = &World; }
+        void SetWorld(HelioWorld& World) { m_World = &World; }
+        void SetRenderingCamera(Camera* cam) { m_Camera = cam; }
 
         void Render();
         void WaitIdle() const;
 
         void SubmitMesh(const resource::Mesh& m, const Transform& T)
         {
-            m_pending[m.Id].emplace_back(m, T.ToMatrix());
+            m_PendingInstances[m.Id].emplace_back(m, T.ToMatrix());
         }
 
-        [[nodiscard]] const std::unordered_map<uint64_t, std::vector<PendingInstance>>& GetPendingInstances() const noexcept { return m_pending; }
-        
+        [[nodiscard]] const std::unordered_map<uint64_t, std::vector<core::PendingInstance>>& GetPendingInstances() const noexcept { return m_PendingInstances; }
+
     private:
-        void PreRenderScene(render::RenderGraph* rg);
-        void RenderScene(render::RenderGraph* rg);
-        void RenderPostProcess(render::RenderGraph* rg);
-        void RenderUI(render::RenderGraph* rg);
-        void RenderOverlay(render::RenderGraph* rg);
+        void DrawStaticMeshes(render::RenderGraph* rg);
+        void DrawPostProcess(render::RenderGraph* rg);
+        void DrawDebug(render::RenderGraph* rg);
+        void DrawUI(render::RenderGraph* rg);
+        void DrawOverlay(render::RenderGraph* rg);
 
-        rhi::Device* m_rhi;
-        rhi::TextureHandle m_colorTexture;
-        rhi::TextureHandle m_depthTexture;
+        rhi::Device* m_RHI;
+        rhi::TextureHandle m_ColorTexture;
+        rhi::TextureHandle m_DepthTexture;
         render::overlay::Overlay m_Overlay;
+        render::debug::DebugDraw m_DebugDraw;
 
-        HelioWorld* m_world = nullptr;
-        
+        HelioWorld* m_World = nullptr;
+        Camera* m_Camera = nullptr;
+
         // Grouped by mesh ID so all instances of the same mesh can be drawn in one DrawIndexed call.
-        std::unordered_map<uint64_t, std::vector<PendingInstance>> m_pending;
+        std::unordered_map<uint64_t, std::vector<core::PendingInstance>> m_PendingInstances;
 
         // Owned GPU resources
-        resource::InstanceBatch m_instanceBatch; // ring-buffered per-frame
-        
-        rhi::PipelineHandle m_meshPipeline;
-        
-        int m_Width;
-        int m_Height;
+        resource::InstanceBatch m_InstanceBatch; // ring-buffered per-frame
+
+        rhi::PipelineHandle m_MeshPipeline;
+
+        int m_Width{0};
+        int m_Height{0};
+        double m_StartFrameSec{0};
     };
 };

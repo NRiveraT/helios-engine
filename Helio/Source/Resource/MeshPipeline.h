@@ -21,10 +21,12 @@
 
 #include <cstdint>
 
+#include "Material.h"
+
 namespace helio::rhi { class Device; }
 
 namespace helio::resource {
-
+        
 /// CPU-side mirror of MeshInstanced.slang's push-constant struct. Build one
 /// per draw and pass to `CommandList::Push(pc)`.
 ///
@@ -39,20 +41,27 @@ namespace helio::resource {
 ///     PC.AlbedoTint         = float4(1, 1, 1, 1);
 struct MeshInstancedPushConsts {
     Mat4Packed  ViewProj;            // 64  (offset 0)
+    
+    Vec4Packed  LightDirWS;          // 16  (offset 80)  — must be normalized
+
+    Vec3Packed Albedo;
+    float Roughness;
+    
+    Vec3Packed  CameraPosWS;
+    float Metallic;
+    
     uint32_t    VertexBufferSlot;    //  4  (offset 64)
     uint32_t    InstanceBufferSlot;  //  4  (offset 68)
-    // HLSL packing forbids a float3 from straddling a 16-byte boundary, so
-    // Slang inserts 8 bytes of padding here. We mirror that exactly — leaving
-    // it out would cause vkCreateGraphicsPipelines to reject the layout (the
-    // SPIR-V block reports a larger size than VkPushConstantRange's range).
-    uint32_t    _PadA[2];            //  8  (offset 72)  — Slang-required pad
-    Vec3Packed  LightDirWS;          // 12  (offset 80)  — must be normalized
-    uint32_t    _Pad0;               //  4  (offset 92)
-    Vec4Packed  AlbedoTint;          // 16  (offset 96)
+    // Start index of this draw's instances within the (shared) instance
+    // buffer. The shader reads from `InstanceBufferSlot[InstanceBase + InstanceID]`
+    // so multiple meshes can pack into one buffer and each draw addresses
+    // its own slice. Set this to `D.FirstInstance` per draw.
+    uint32_t    InstanceBase;        //  4  (offset 72)
 };
-static_assert(sizeof(MeshInstancedPushConsts) == 64 + 4 + 4 + 8 + 12 + 4 + 16,
+    
+static_assert(sizeof(MeshInstancedPushConsts) == 64 + 16 + 12 + 4 + 12 + 4 + 4 + 4 + 4,
               "MeshInstancedPushConsts must match MeshInstanced.slang's HLSL packing");
-static_assert(sizeof(MeshInstancedPushConsts) == 112,
+static_assert(sizeof(MeshInstancedPushConsts) == 124,
               "Slang's reported block size for MeshInstanced is 112 B");
 static_assert(sizeof(MeshInstancedPushConsts) <= 128,
               "push constants must fit Vulkan's 128-byte minimum");
