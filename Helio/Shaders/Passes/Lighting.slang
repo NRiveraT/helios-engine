@@ -1,7 +1,7 @@
 ﻿import Bindless;
 import Fullscreen;
 
-struct PC { uint AlbedoSlot, NormalSlot, EmissiveSlot, SamplerSlot; };
+struct PC { uint AlbedoSlot, SamplerSlot; };
 [[vk::push_constant]] PC pc;
 
 [shader("vertex")]
@@ -9,5 +9,8 @@ FullscreenVSOut VSMain(uint VertexID : SV_VertexID) { return FullscreenVS(Vertex
 
 [shader("fragment")]
 float4 PSMain(FullscreenVSOut In) : SV_Target {
-    return GetTexture2D(pc.NormalSlot).Sample(GetSampler(pc.SamplerSlot), In.UV);
+	float3 ColorOut = GetTexture2D(pc.AlbedoSlot).Sample(GetSampler(pc.SamplerSlot), In.UV).rgb;
+	ColorOut /= 100.0;
+	
+    return float4(ColorOut, 1.0);
 }

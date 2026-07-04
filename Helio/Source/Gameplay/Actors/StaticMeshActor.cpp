@@ -11,6 +11,6 @@ namespace helio::gameplay
 
     void StaticMeshActor::OnRender()
     {
-        m_World->Engine().Renderer().SubmitMesh(m_Mesh, GetTransform());
+        m_World->Engine().Renderer().SubmitMesh(m_Mesh, m_Material, GetTransform());
     }
 }

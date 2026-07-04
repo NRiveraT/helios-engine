@@ -85,6 +85,11 @@ void CommandList::SetViewportFull() {
     Impl->Ctx->SetViewportFullInternal(Impl);
 }
 
+void CommandList::SetViewport(uint32_t Width, uint32_t Height) {
+    auto* Impl = I(*this);
+    Impl->Ctx->SetViewportToExtentInternal(Impl, Width, Height);
+}
+
 void CommandList::Draw(uint32_t VertexCount, uint32_t InstanceCount,
                        uint32_t FirstVertex, uint32_t FirstInstance) {
     auto* Impl = I(*this);

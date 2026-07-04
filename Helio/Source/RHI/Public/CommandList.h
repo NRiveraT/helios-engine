@@ -110,6 +110,12 @@ public:
     /// Set viewport + scissor to the full swapchain extent.
     void SetViewportFull();
 
+    /// Set viewport + scissor to a custom `Width x Height` rectangle starting
+    /// at (0, 0). Use when rendering to a non-swapchain target whose extent
+    /// differs from the swapchain — e.g. a 1024×1024 shadow-map texture, an
+    /// offscreen RT, or a half-res buffer.
+    void SetViewport(uint32_t Width, uint32_t Height);
+
     // -------------------------------------------------------------------------
     // Submit a draw / dispatch.
     // -------------------------------------------------------------------------

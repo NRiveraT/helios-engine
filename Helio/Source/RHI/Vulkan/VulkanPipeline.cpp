@@ -142,7 +142,9 @@ VkPipelineLayout VulkanPipelineFactory::GetOrCreateLayout(uint32_t PushBytes) {
 
 VulkanPipeline VulkanPipelineFactory::CreateGraphics(const GraphicsPipelineDesc& Desc) {
     HELIO_CHECK(Desc.ShaderPath);
-    HELIO_CHECK(Desc.ColorAttachmentCount > 0);
+    // At least one attachment (color OR depth) must be bound — zero would
+    // produce a no-op pipeline. Depth-only is valid (e.g. shadow maps).
+    HELIO_CHECK(Desc.ColorAttachmentCount > 0 || Desc.DepthFormat != Format::Undefined);
 
     auto Module = m_shaderCache->Load(Desc.ShaderPath);
     HELIO_CHECK(Module != VK_NULL_HANDLE);

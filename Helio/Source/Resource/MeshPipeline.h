@@ -66,6 +66,24 @@ static_assert(sizeof(MeshInstancedPushConsts) == 124,
 static_assert(sizeof(MeshInstancedPushConsts) <= 128,
               "push constants must fit Vulkan's 128-byte minimum");
 
+/*
+    float4x4 LightViewProj;
+    uint VertexBufferSlot;
+    uint InstanceBufferSlot;
+    uint InstanceBase;
+ */
+    
+struct ShadowMapPushConsts {
+    Mat4Packed LightViewProj;
+    uint32_t VertexBufferSlot;
+    uint32_t InstanceBufferSlot;
+    uint32_t InstanceBase;
+};
+static_assert(sizeof(ShadowMapPushConsts) == 64 + 4 + 4 + 4,
+              "ShadowMapPushConsts must match MeshInstanced.slang's HLSL packing");
+static_assert(sizeof(ShadowMapPushConsts) == 76,
+              "Slang's reported block size for MeshInstanced is 40 B");
+    
 /// Description for `CreateMeshInstancedPipeline`. Most fields default to
 /// "draw onto an opaque LH reverse-Z color+depth target".
 struct MeshInstancedPipelineDesc {

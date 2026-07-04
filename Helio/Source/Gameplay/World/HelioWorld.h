@@ -35,10 +35,17 @@ namespace helio::gameplay
 
         /// Spawn an Actor of type `T`. The World takes ownership; the returned
         /// pointer is valid until the actor is destroyed (or the World shuts down).
+        ///
+        /// `*this` is automatically passed as `T`'s first constructor argument
+        /// (the world reference Actors require). Any additional ctor params
+        /// are forwarded after it.
+        ///
+        ///     World.SpawnActor<StaticMeshActor>(MeshHandle);
+        ///       → new StaticMeshActor(World, MeshHandle);
         template <typename T, typename... Args>
         T* SpawnActor(Args&&... args)
         {
-            auto Owned = std::make_unique<T>(std::forward<Args>(args)...);
+            auto Owned = std::make_unique<T>(*this, std::forward<Args>(args)...);
             T* Raw = Owned.get();
             Raw->BeginPlay();
             m_actors.push_back(std::move(Owned));
@@ -46,7 +53,7 @@ namespace helio::gameplay
         }
 
         template <typename T>
-        [[nodiscard]] T* GetActorsByClass()
+        [[nodiscard]] T* GetActorByClass()
         {
             for (auto& actor : m_actors)
             {

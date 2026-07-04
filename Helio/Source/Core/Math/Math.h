@@ -39,6 +39,17 @@ namespace math {
 /// Pass NearZ small (e.g. 0.01f) to keep precision at distance.
 [[nodiscard]] float4x4 PerspectiveReverseZLH(float FovYRadians, float Aspect, float NearZ);
 
+/// Left-handed orthographic projection, centered on the view-space origin.
+/// `Width` and `Height` are the full frustum extents (x maps from `-W/2..+W/2`
+/// to clip `-1..+1`, same for y). Depth maps `NearZ -> 0`, `FarZ -> 1` in
+/// Vulkan-style `[0, 1]` clip-z (forward-Z, NOT reverse-Z — pair with
+/// `DepthCompare::Less` or invert at the comparison site if mixing with the
+/// reverse-Z perspective pipeline).
+///
+/// Primary use: shadow-map projections for directional lights, where parallel
+/// rays demand an orthographic (not perspective) frustum.
+[[nodiscard]] float4x4 OrthoLH(float Width, float Height, float NearZ, float FarZ);
+
 // ---- Transform builders ---------------------------------------------------
 
 [[nodiscard]] float4x4 Identity();

@@ -58,6 +58,26 @@ float4x4 PerspectiveReverseZLH(float FovYRadians, float Aspect, float NearZ) {
     );
 }
 
+float4x4 OrthoLH(float Width, float Height, float NearZ, float FarZ) {
+    // Centered LH orthographic in standard column-vector form.
+    //   x_clip = (2/W) * x_view              maps [-W/2, +W/2] -> [-1, +1]
+    //   y_clip = (2/H) * y_view              maps [-H/2, +H/2] -> [-1, +1]
+    //   z_clip = z_view/(F-N) - N/(F-N)      maps [N, F] -> [0, 1] (forward-Z)
+    //   w_clip = 1
+    //
+    // No Y negation here (unlike PerspectiveReverseZLH) — shadow maps are
+    // sampled, not viewed on screen, so the Y-down framebuffer convention
+    // doesn't apply. If you ever use this for an on-screen render, negate
+    // the y row to match the perspective projection's convention.
+    const float InvDepth = 1.0f / (FarZ - NearZ);
+    return float4x4(
+        2.0f / Width,  0.0f,           0.0f,      0.0f,
+        0.0f,          2.0f / Height,  0.0f,      0.0f,
+        0.0f,          0.0f,           InvDepth, -NearZ * InvDepth,
+        0.0f,          0.0f,           0.0f,      1.0f
+    );
+}
+
 // ---- Transform builders ----------------------------------------------------
 
 float4x4 Identity() {

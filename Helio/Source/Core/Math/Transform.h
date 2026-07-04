@@ -27,6 +27,12 @@ struct Transform {
     float4 Rotation{0.0f, 0.0f, 0.0f, 1.0f};
     float3 Scale{1.0f, 1.0f, 1.0f};
 
+    Transform() noexcept :
+    Position(0.f),
+    Rotation(0.f, 0.f, 0.f, 1.f),
+    Scale(1.f)
+    {}
+    
     /// Compose into a 4x4 column-vector matrix: T * R * S.
     [[nodiscard]] float4x4 ToMatrix() const;
 
