@@ -46,12 +46,23 @@ namespace helio::scene
             .DebugName = "SceneDepth"
         });
 
+        // Shadow maps
+
         m_ShadowMapTexture = m_RHI->CreateTexture({
             .Width = kShadowMapResolution,
             .Height = kShadowMapResolution,
             .Fmt = rhi::Format::D32_SFLOAT,
             .Usage = rhi::TextureUsage::DepthStencilAttachment | rhi::TextureUsage::Sampled,
             .DebugName = "SunShadowMap"
+        });
+
+        // AO
+        m_AO = m_RHI->CreateTexture({
+            .Width = static_cast<uint32_t>(Width),
+            .Height = static_cast<uint32_t>(Height),
+            .Fmt = rhi::Format::R8_UNORM,
+            .Usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled | rhi::TextureUsage::TransferSrc,
+            .DebugName = "SceneAO"
         });
 
         m_MeshPipeline = resource::CreateMeshInstancedPipeline(
@@ -62,6 +73,20 @@ namespace helio::scene
                 .Cull = rhi::CullMode::Back,
                 .DebugName = "Mesh Pipeline"
             });
+
+
+        // Depth Prepass
+        m_DepthPrepassPipeline = m_RHI->CreateGraphicsPipeline({
+            .ShaderPath = "Shaders/Passes/DepthPrepass.slang",
+            .ColorAttachmentCount = 0,
+            .DepthFormat = rhi::Format::D32_SFLOAT,
+            .Cull = rhi::CullMode::Back,
+            .Front = rhi::FrontFace::Clockwise,
+            .DepthTest = true,
+            .DepthWrite = true,
+            .DepthCompare = rhi::CompareOp::Greater,
+            .DebugName = "Depth Prepass"
+        });
 
         // Same clip-space conventions as the main pass: reverse-Z ortho with
         // baked Y-flip -> Greater + Clockwise + clear-depth 0, identical to
@@ -271,6 +296,16 @@ namespace helio::scene
             ReceiverBiasNDC,
             Shadow.Enabled ? 1.0f : 0.0f);
         FC.ShadowMapSlot = m_ShadowMapTexture.SampledSlot;
+
+        const float4x4 Proj = m_Camera->GetProjection();
+        const float4x4 InvProj = hlslpp::inverse(Proj);
+
+        FC.Proj = Proj;
+        FC.InvProj = InvProj;
+        FC.ViewportAO = float4(
+            static_cast<float>(m_Width), static_cast<float>(m_Height),
+            hlslpp::asfloat(m_AO.SampledSlot), 1.f);
+
         m_FrameConstantsRing.Write(0, &FC, sizeof(FC));
         const uint32_t FrameSlot = m_FrameConstantsRing.Current().BindlessSlot;
 
@@ -298,6 +333,31 @@ namespace helio::scene
               });
         }
 
+        const bool HasScene = !m_Draws.empty() && m_Camera != nullptr;
+
+        {
+            Rg.Graphics("Depth Prepass")
+              .Depth(m_DepthTexture, 0.0f)
+              .Execute([this, FrameSlot](rhi::CommandList& C)
+              {
+                  if (!HasScene)
+                  {
+                      return;
+                  }
+
+                  C.Bind(m_DepthPrepassPipeline);
+                  C.SetViewport(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
+
+                  for (const auto& D : m_Draws)
+                  {
+                      // ShadowPC.VertexBufferSlot = D.Mesh.VertexBuffer.BindlessSlot;
+                      // ShadowPC.InstanceBase = D.FirstInstance;
+                      // C.Push(ShadowPC);
+                      // C.BindIndexBuffer(D.Mesh.IndexBuffer, resource::IndexTypeFor(D.Mesh));
+                      // C.DrawIndexed(D.Mesh.IndexCount, D.InstanceCount);
+                  }
+              });
+        }
         // AO
 
         // ---- Main opaque pass ------------------------------------------------
@@ -307,9 +367,8 @@ namespace helio::scene
         // beneath the overlay. When there is nothing to draw the lambda is a
         // no-op and only the BeginRendering clear runs.
         {
-            const bool HasScene = !m_Draws.empty() && m_Camera != nullptr;
             auto Pass = Rg.Graphics("Static Meshes")
-                          .Color(m_ColorTexture, 0.1274, 0.3005, 0.8469, 1.0)
+                          .Color(m_ColorTexture, 0.1274f, 0.3005f, 0.8469f, 1.f)
                           .Color(m_NormalTexture)
                           .Depth(m_DepthTexture, 0.0f);
             if (Shadow.Enabled && HasScene)
@@ -405,7 +464,9 @@ namespace helio::scene
         // routes through the deletion queue, so releasing the old textures
         // mid-run is safe even if a prior frame still referenced them.
         m_RHI->DestroyTexture(m_ColorTexture);
+        m_RHI->DestroyTexture(m_NormalTexture);
         m_RHI->DestroyTexture(m_DepthTexture);
+        m_RHI->DestroyTexture(m_AO);
 
         m_ColorTexture = m_RHI->CreateTexture({
             .Width = static_cast<uint32_t>(Width),
@@ -415,12 +476,28 @@ namespace helio::scene
             rhi::TextureUsage::TransferSrc,
             .DebugName = "SceneColor"
         });
+        m_NormalTexture = m_RHI->CreateTexture({
+            .Width = static_cast<uint32_t>(Width),
+            .Height = static_cast<uint32_t>(Height),
+            .Fmt = rhi::Format::RGBA16F,
+            .Usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled,
+            .DebugName = "SceneNormal"
+        });
         m_DepthTexture = m_RHI->CreateTexture({
             .Width = static_cast<uint32_t>(Width),
             .Height = static_cast<uint32_t>(Height),
             .Fmt = rhi::Format::D32_SFLOAT,
             .Usage = rhi::TextureUsage::DepthStencilAttachment | rhi::TextureUsage::Sampled,
             .DebugName = "SceneDepth"
+        });
+
+        // Recreate AO texture after resize
+        m_AO = m_RHI->CreateTexture({
+            .Width = static_cast<uint32_t>(Width),
+            .Height = static_cast<uint32_t>(Height),
+            .Fmt = rhi::Format::R8_UNORM,
+            .Usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled,
+            .DebugName = "SceneAO"
         });
     }
 } // namespace helio::scene

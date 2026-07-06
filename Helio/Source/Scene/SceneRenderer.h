@@ -76,8 +76,12 @@ namespace helio::scene
                                       //             z = receiver depth bias (NDC), w = enabled
         uint32_t ShadowMapSlot;       // offset 192
         uint32_t Pad0, Pad1, Pad2;    // offset 196
+
+        Mat4Packed Proj;
+        Mat4Packed InvProj;
+        Vec4Packed ViewportAO;      
     };
-    static_assert(sizeof(FrameConstants) == 208, "must match Shaders/Common/Frame.slang");
+    static_assert(sizeof(FrameConstants) == 352, "must match Shaders/Common/Frame.slang");
 
     class SceneRenderer
     {
@@ -139,6 +143,11 @@ namespace helio::scene
         rhi::TextureHandle m_NormalTexture;
         rhi::TextureHandle m_DepthTexture;
         rhi::TextureHandle m_ShadowMapTexture;
+
+        // WIP
+        rhi::TextureHandle m_AO;
+
+        rhi::PipelineHandle m_DepthPrepassPipeline;
 
         rhi::PipelineHandle m_MeshPipeline;
         rhi::PipelineHandle m_ShadowMapPipeline;

@@ -29,6 +29,9 @@ struct FrameConstants {
     float4 LightColorAmbient;
     float4 ShadowParams;
     uint ShadowMapSlot;
+    float4x4 Proj;
+    float4x4 InvProj;
+    float4 ViewportAO;
 };
 
 float4x4 LoadMat4ColumnStored(ByteAddressBuffer B, uint Offset) {
@@ -50,6 +53,9 @@ FrameConstants LoadFrameConstants(uint Slot) {
     F.LightColorAmbient = asfloat(B.Load4(160));
     F.ShadowParams = asfloat(B.Load4(176));
     F.ShadowMapSlot = B.Load(192);
+    F.Proj = LoadMat4ColumnStored(B, 208);
+    F.InvProj = LoadMat4ColumnStored(B, 272);
+    F.ViewportAO = asfloat(B.Load4(288));
     return F;
 }
 

@@ -1299,7 +1299,7 @@ void VulkanContext::BeginRenderingToTexturesInternal(VulkanCommandListImpl* C,
                                                      const DepthAttachment* Depth) {
     HELIO_CHECK(NumColors <= 8);
     HELIO_CHECK(NumColors > 0 || Depth);
-
+    
     // Build the per-attachment VkRenderingAttachmentInfo array, transitioning
     // each texture to the right layout first.
     std::array<VkRenderingAttachmentInfo, 8> ColorAttInfos{};
