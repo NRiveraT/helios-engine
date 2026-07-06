@@ -138,9 +138,13 @@ void Dispatcher::Clear() {
     m_actionPressed.clear();
     m_actionReleased.clear();
     m_actionHeld.clear();
+    ResetHeldState();
+    m_mouseX = m_mouseY = 0.0f;
+}
+
+void Dispatcher::ResetHeldState() noexcept {
     m_keysDown.clear();
     m_mouseDown.clear();
-    m_mouseX = m_mouseY = 0.0f;
     m_mouseDeltaX = m_mouseDeltaY = 0.0f;
     m_wheelX = m_wheelY = 0.0f;
 }

@@ -22,6 +22,15 @@ add_custom_command(TARGET Game POST_BUILD
     COMMAND_EXPAND_LISTS
 )
 
+# Copy game assets (test glTF models, etc.) next to the binary so the demo can
+# load them by relative path (e.g. "Assets/Crate.gltf").
+add_custom_command(TARGET Game POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/Assets
+        $<TARGET_FILE_DIR:Game>/Assets
+    VERBATIM
+)
+
 # Compiled engine shaders deploy under Shaders/<rel>.spv next to Game.exe.
 #
 # Game depends on Helio.Shaders, so editing any .slang propagates:

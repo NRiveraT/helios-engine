@@ -11,7 +11,10 @@ add_subdirectory(Source/RHI)
 add_subdirectory(Source/Renderer)
 add_subdirectory(Source/Input)
 add_subdirectory(Source/Resource)
+add_subdirectory(Source/Scene)
+add_subdirectory(Source/Editor)
 add_subdirectory(Source/Gameplay)
+add_subdirectory(Tests)
 
 target_link_libraries(Helio INTERFACE
     Helio.Core
@@ -20,6 +23,8 @@ target_link_libraries(Helio INTERFACE
     Helio.Renderer
     Helio.Input
     Helio.Resource
+    Helio.Scene
+    Helio.Editor
     Helio.Gameplay
 )
 

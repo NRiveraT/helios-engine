@@ -8,6 +8,7 @@
 
 #include <Input/Dispatcher.h>
 
+#include <functional>
 #include <string>
 
 struct SDL_Window;
@@ -54,6 +55,19 @@ public:
     ///   Win.Dispatcher().OnActionPressed("Quit", [&]{ Win.RequestClose(); });
     [[nodiscard]] input::Dispatcher& Dispatcher() noexcept { return m_dispatcher; }
 
+    /// Hook invoked for EVERY native SDL event BEFORE it is translated and
+    /// dispatched to gameplay input. `NativeEvent` is a `const SDL_Event*`
+    /// (type-erased so SDL stays out of this public header — the installer
+    /// links SDL and casts it back). Return true to CONSUME the event: it
+    /// will not reach the input dispatcher. Window-close is never consumable
+    /// (close intent always registers). One hook slot — installing replaces
+    /// the previous hook; pass an empty function to remove.
+    ///
+    /// This is the editor/UI capture point: Dear ImGui's SDL3 backend feeds
+    /// from here and swallows keyboard/mouse while its widgets have focus.
+    using NativeEventHook = std::function<bool(const void* NativeEvent)>;
+    void SetNativeEventHook(NativeEventHook Hook) { m_nativeEventHook = std::move(Hook); }
+
     // -------------------------------------------------------------------------
     // Mouse capture / relative mode
     //
@@ -84,6 +98,7 @@ private:
     bool m_shouldClose{false};
     bool m_mouseCaptured{false};
     input::Dispatcher m_dispatcher;
+    NativeEventHook m_nativeEventHook;
 };
 
 } // namespace helio::platform::windows

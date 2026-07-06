@@ -90,6 +90,12 @@ void CommandList::SetViewport(uint32_t Width, uint32_t Height) {
     Impl->Ctx->SetViewportToExtentInternal(Impl, Width, Height);
 }
 
+void CommandList::SetScissor(int32_t X, int32_t Y, uint32_t Width, uint32_t Height) {
+    auto* Impl = I(*this);
+    const VkRect2D Scissor{ {X, Y}, {Width, Height} };
+    vkCmdSetScissor(Impl->Cmd, 0, 1, &Scissor);
+}
+
 void CommandList::Draw(uint32_t VertexCount, uint32_t InstanceCount,
                        uint32_t FirstVertex, uint32_t FirstInstance) {
     auto* Impl = I(*this);

@@ -3,7 +3,6 @@ helio_add_module(Renderer
         RenderGraph.cpp
         Overlay/Overlay.cpp
         Debug/DebugDraw.cpp
-        Passes/MeshPass.cpp
     PUBLIC_LINK
         Helio.Core
         Helio.RHI

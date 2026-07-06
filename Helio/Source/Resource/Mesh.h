@@ -19,7 +19,9 @@
 /// only reads VertexBuffer/IndexBuffer/IndexCount won't need to change.
 #pragma once
 
+#include "Material.h"
 #include "MeshData.h"
+#include "TextureCache.h"
 
 #include <Core/Math/Math.h>
 
@@ -27,7 +29,9 @@
 #include <RHI/Public/CommandList.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <unordered_map>
+#include <vector>
 
 namespace helio::rhi { class Device; }
 
@@ -61,10 +65,26 @@ struct Mesh {
     [[nodiscard]] constexpr bool IsValid() const noexcept { return Id != 0; }
 };
 
+    
+    
 /// Convenience: pick the right `IndexType` enum for `CommandList::BindIndexBuffer`.
 [[nodiscard]] inline rhi::IndexType IndexTypeFor(const Mesh& M) noexcept {
     return M.Indices == IndexFormat::U16 ? rhi::IndexType::U16 : rhi::IndexType::U32;
 }
+
+/// A drawable unit: one `Mesh` paired with the `Material` it renders with.
+///
+/// This is the granularity a `StaticMeshActor` holds and the renderer draws.
+/// It lives in the resource layer (not scene) because the importer — which
+/// reads glTF material data and builds the `Material` — is a resource-level
+/// system, and the mesh+material bundle IS the imported asset's material
+/// assignment (the same way a mesh asset's sections carry material slots in
+/// other engines). A glTF file with N primitives imports to N sections.
+struct MeshSection {
+    std::string SectionName;  // for debugging; not used by the renderer
+    Mesh     Mesh;
+    Material Material;
+};
 
 /// Authoring options passed to `MeshSystem::CreateMesh`.
 struct MeshDesc {
@@ -103,14 +123,33 @@ public:
     /// populated; `Data.Bounds` will be recomputed if empty.
     [[nodiscard]] Mesh CreateMesh(const MeshDesc& Desc);
 
+    /// Import + create every triangle primitive from a `.gltf` / `.glb` file
+    /// (via `ImportGltf`), pairing each with the `Material` parsed from its
+    /// glTF material — one `MeshSection` per primitive, ready to hand to a
+    /// `StaticMeshActor`. This is the "set it and forget it" load path: the
+    /// material assignment (factors AND textures) travels with the mesh.
+    /// Material textures are decoded + uploaded through this system's owned
+    /// `TextureCache`. Returns empty on load failure (logs the reason). See
+    /// `MeshImport.h` for the coordinate conversion.
+    [[nodiscard]] std::vector<MeshSection> LoadModel(const std::filesystem::path& Path);
+
+    /// Geometry-only variant of `LoadModel`: creates the meshes but drops the
+    /// materials (and does not load textures). Use when you'll assign
+    /// materials yourself.
+    [[nodiscard]] std::vector<Mesh> LoadMeshes(const std::filesystem::path& Path);
+
     /// Schedule the mesh's buffers for deferred destruction (next frame the
     /// slot retires). Safe to call from anywhere except inside a render pass.
     void DestroyMesh(Mesh M);
+
+    /// The texture cache this system owns (material textures from `LoadModel`).
+    [[nodiscard]] TextureCache& Textures() noexcept { return m_textureCache; }
 
 private:
     rhi::Device* m_dev{nullptr};
     std::unordered_map<uint64_t, Mesh> m_meshes;
     uint64_t m_nextId{1};
+    TextureCache m_textureCache;
 };
 
 } // namespace helio::resource

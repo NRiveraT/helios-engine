@@ -1,33 +1,41 @@
-import Bindless;
-import Vertex;
+// ShadowMap.slang — depth-only pass rendering casters from the sun's view.
+//
+// The light's view-projection comes from FrameConstants (the SAME matrix the
+// mesh pass samples with — one source of truth, so UV orientation and depth
+// convention agree by construction). Push constants mirror
+// `helio::resource::ShadowMapPushConsts` (16 bytes).
+//
+// Conventions match every other 3D pass: reverse-Z (clear 0, CompareOp
+// Greater), Y-negated ortho projection, FrontFace::Clockwise.
 
-import Fullscreen;
+import Vertex;
+import Frame;
 
 struct PC {
-  float4x4 LightViewProj;
-  uint VertexBufferSlot;
-  uint InstanceBufferSlot;
-  uint InstanceBase;
+    uint FrameSlot;
+    uint VertexBufferSlot;
+    uint InstanceBufferSlot;
+    uint InstanceBase;
 };
 [[vk::push_constant]]
 PC pc;
 
 struct VSOut {
-  float4 Position : SV_Position;
+    float4 Position : SV_Position;
 };
 
 [shader("vertex")]
 VSOut VSMain(uint VertexID: SV_VertexID, uint InstanceID: SV_InstanceID) {
-  VSOut Out;
+    Vertex V = LoadVertex(pc.VertexBufferSlot, VertexID);
+    float4x4 Xform = LoadInstanceTransform(pc.InstanceBufferSlot,
+                                           pc.InstanceBase + InstanceID);
 
-  Vertex V = LoadVertex(pc.VertexBufferSlot, VertexID);
-  float4x4 Xform = LoadInstanceTransform(pc.InstanceBufferSlot,
-                                         pc.InstanceBase + InstanceID);
+    FrameConstants Frame = LoadFrameConstants(pc.FrameSlot);
 
-  float4 WorldPos = mul(Xform, float4(V.Pos, 1.0f));
-  Out.Position = mul(pc.LightViewProj, WorldPos);
-
-  return Out;
+    VSOut Out;
+    float4 WorldPos = mul(Xform, float4(V.Pos, 1.0));
+    Out.Position = mul(Frame.LightViewProj, WorldPos);
+    return Out;
 }
 
 // Depth-only pipeline: pipeline's ColorAttachmentCount is 0, so the fragment

@@ -14,7 +14,8 @@ rhi::PipelineHandle CreateMeshInstancedPipeline(
     Pd.VertexEntry          = "VSMain";
     Pd.FragmentEntry        = "PSMain";
     Pd.ColorFormats[0]      = Desc.ColorFormat;
-    Pd.ColorAttachmentCount = 1;
+    Pd.ColorFormats[1]      = Desc.NormalFormat;
+    Pd.ColorAttachmentCount = 2;
     Pd.DepthFormat          = Desc.DepthFormat;
     Pd.Topology             = rhi::PrimitiveTopology::TriangleList;
     Pd.Cull                 = Desc.Cull;

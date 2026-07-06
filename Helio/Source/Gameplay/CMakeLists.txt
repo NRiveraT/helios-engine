@@ -1,15 +1,16 @@
-file(GLOB_RECURSE GAMEPLAY_SOURCES CONFIGURE_DEPENDS
-    "*.cpp"
-    "*.h"
-)
+# Helio.Gameplay — application framework (engine loop, camera controller).
+# Sits above Scene; the world/actor layer lives in Helio.Scene.
 
 helio_add_module(Gameplay
     SOURCES
-        ${GAMEPLAY_SOURCES}
+        HelioEngine.cpp
+        FlyCameraController.cpp
     PUBLIC_LINK
         Helio.Core
-		Helio.Renderer
-		Helio.Resource
-		Helio.Input
+        Helio.Scene
+        Helio.Editor
+        Helio.Platform.Windows
+        Helio.Input
+        Helio.Resource
+        Helio.RHI
 )
-

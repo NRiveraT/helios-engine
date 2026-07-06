@@ -1,5 +1,7 @@
 #include "Mesh.h"
 
+#include "MeshImport.h"
+
 #include <RHI/Public/Device.h>
 
 #include <Core/Assert/Assert.h>
@@ -12,7 +14,27 @@
 
 namespace helio::resource {
 
-MeshSystem::MeshSystem(rhi::Device& Dev) : m_dev(&Dev) {}
+MeshSystem::MeshSystem(rhi::Device& Dev) : m_dev(&Dev), m_textureCache(Dev) {}
+
+std::vector<MeshSection> MeshSystem::LoadModel(const std::filesystem::path& Path) {
+    std::vector<MeshSection> Sections;
+    for (ImportedMesh& Imported : ImportGltf(Path, &m_textureCache)) {
+        Mesh M = CreateMesh({.Data = &Imported.Data, .DebugName = Imported.Name.c_str()});
+        if (M.IsValid()) {
+            std::string DebugName = Imported.Name;
+            Sections.push_back({DebugName, M, Imported.Material});
+        }
+    }
+    return Sections;
+}
+
+std::vector<Mesh> MeshSystem::LoadMeshes(const std::filesystem::path& Path) {
+    std::vector<Mesh> Result;
+    for (const MeshSection& Section : LoadModel(Path)) {
+        Result.push_back(Section.Mesh);
+    }
+    return Result;
+}
 
 MeshSystem::~MeshSystem() {
     for (auto& [Id, M] : m_meshes) {
@@ -130,10 +152,9 @@ Mesh MeshSystem::CreateMesh(const MeshDesc& Desc) {
     M.IndexCount   = IdxCount;
     M.Indices      = IdxFormat;
     M.Bounds       = Src.Bounds;
-    if (M.Bounds.Min.x == 0 && M.Bounds.Max.x == 0 &&
-        M.Bounds.Min.y == 0 && M.Bounds.Max.y == 0 &&
-        M.Bounds.Min.z == 0 && M.Bounds.Max.z == 0) {
-        // Bounds weren't set on the input; compute from working copy.
+    if (!M.Bounds.IsValid()) {
+        // Bounds weren't set on the input (default AABB is the empty,
+        // Min > Max state); compute from working copy.
         MeshData Tmp{};
         Tmp.Vertices = Verts;
         Tmp.RecomputeBounds();

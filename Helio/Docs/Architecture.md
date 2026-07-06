@@ -5,11 +5,26 @@ How the modules layer, how a frame flows from `main()` to GPU, and the conventio
 ## Module layout
 
 ```
-HelioObject (conceptual)        ← every reflectable / lifetime-managed type (future)
-        │
 Game project   ───────────►   game/Source/main.cpp
-        │                       (the only consumer of Helio's public API)
+        │                       (constructs gameplay::HelioEngine, calls Run())
         ▼
+┌──────────────────────────────────────────────────────────┐
+│  Helio.Gameplay    (HelioEngine app framework: window +  │
+│                     device + renderer + main loop,       │
+│                     FlyCameraController)                 │
+└───────────┬───────────────────────────┬──────────────────┘
+            ▼                           ▼
+┌───────────────────────────┐  ┌───────────────────────────┐
+│  Helio.Editor             │  │  Helio.Scene              │
+│  Dear ImGui docking       │─►│  HelioWorld, Actor        │
+│  overlay (F1), scene tree │  │  hierarchy (scene graph), │
+│  inspector, stats; RHI-   │  │  Camera, DirectionalLight,│
+│  bindless ImGui backend   │  │  StaticMeshActor,         │
+└───────────┬───────────────┘  │  SceneRenderer (shadow +  │
+            │                  │  mesh passes, frame       │
+            │                  │  constants)               │
+            │                  └──────┬────────────────────┘
+            ▼                         ▼
 ┌──────────────────────────────────────────────────────────┐
 │  Helio.Resource    (Mesh, MeshSystem, InstanceBatch,     │
 │                     procedural primitives, MeshPipeline) │
@@ -43,7 +58,7 @@ Game project   ───────────►   game/Source/main.cpp
 
 Each `Source/<Module>/` builds an independent static lib (`Helio.Core.lib`, `Helio.RHI.lib`, etc.). Top-level `Helio` is an `INTERFACE` target aggregating them — game code only does `target_link_libraries(Game PRIVATE Helio)`.
 
-**No upward dependencies.** Renderer can use RHI; RHI cannot use Renderer. Resource depends on RHI but not on Renderer (it doesn't know about RenderGraph — game code wires them together).
+**No upward dependencies.** Renderer can use RHI; RHI cannot use Renderer. Resource depends on RHI but not on Renderer. Scene depends on Renderer + Resource but not on Gameplay or Editor; the Scene layer is deliberately **input-free** (camera controllers live in Gameplay) and **editor-free** (the editor reaches in through `SceneRenderer::SetOverlayHook` and the public Actor API).
 
 ## Module responsibilities (one paragraph each)
 
@@ -64,6 +79,15 @@ Built on top of `Helio.RHI`. Provides the declarative pass DAG (`RenderGraph`, `
 
 ### `Helio.Resource`
 GPU-resident mesh storage + per-frame instance batches + the canonical static-mesh pipeline. `MeshSystem` owns vertex/index buffers and runs meshoptimizer over uploaded geometry. `Transform` (from Core) is the game-facing state; `InstanceBatch::Add(const Transform&)` is the bridge to GPU. Future home for glTF loading, materials, LODs, SDFs, meshlets.
+
+### `Helio.Scene`
+The world/actor layer — the scene graph. `HelioWorld` owns every `Actor`'s lifetime (flat storage); parent/child links (`Actor::AttachTo` / `Detach`) are pure topology with lazily-cached, dirty-propagated world transforms (`parentWorld * local`, recomposed on read). Actors: `Camera` (data-only: projection cache + view = exact rigid inverse of the world transform), `DirectionalLight` (direction = actor forward axis), `StaticMeshActor`. `SceneRenderer` draws a world each frame: collects submissions via `Actor::OnRender`, batches instances, uploads the per-frame `FrameConstants` buffer, fits + renders the sun shadow map, then the main PBR pass, debug lines, stats overlay, and an optional overlay hook (the editor). Input-free by design.
+
+### `Helio.Editor`
+The Dear ImGui (docking branch) editor overlay, toggled with F1. Scene-tree panel, transform/material inspector, stats. Platform events flow through `Window::SetNativeEventHook` into ImGui's SDL3 backend, and keyboard/mouse events are consumed while the UI wants them. Rendering is a from-scratch bindless backend on `Helio.RHI` (`ImGuiRenderer` + `Shaders/Editor/ImGuiPass.slang`) — no `imgui_impl_vulkan`, no Vulkan symbols outside the RHI.
+
+### `Helio.Gameplay`
+The application framework. `HelioEngine` owns window + device + `SceneRenderer` + `MeshSystem` + editor and runs the main loop; `FlyCameraController` polls input and drives the scene camera (WASD/EQ + RMB mouse-look), keeping Euler-angle state in exactly one place.
 
 ## A single frame, end to end
 
@@ -124,8 +148,10 @@ Things every module agrees on so they compose without surprises:
 |---|---|---|
 | **Bindless descriptors** in one global set | RHI | Game code passes slot indices via push constants; no per-draw descriptor binding |
 | **Column-vector math** (`mul(M, v_col)`) | Core | Standard textbook convention; matches HLSL's `mul()` |
-| **Y-negated projection** + **`FrontFace::Clockwise`** on 3D pipelines | Core (math) + Resource (mesh pipeline) | World-up = screen-up, math-CCW geometry renders correctly with `Cull::Back` |
-| **Reverse-Z depth** (`CompareOp::Greater`, clear to `0.0`) | Resource (mesh pipeline default) | Better depth precision at distance |
+| **Y-negated projection** + **`FrontFace::Clockwise`** on EVERY 3D pipeline (perspective AND the shadow ortho) | Core (math) + Resource (mesh pipeline) | World-up = screen-up, math-CCW geometry renders correctly with `Cull::Back`; one winding rule with zero per-projection exceptions |
+| **Reverse-Z depth** (`CompareOp::Greater`, clear to `0.0`) — everywhere, shadow maps included | Resource (mesh pipeline default) + Scene (shadow pipeline) | Better depth precision at distance; one depth convention across all passes |
+| **Euler = intrinsic Yaw(Y)→Pitch(X)→Roll(Z)**, composed `qYaw*qPitch*qRoll` | Core | Unity/UE camera convention; pinned by `Tests/MathTests.cpp` |
+| **Per-frame constants in a bindless SSBO** (`FrameConstants`), push constants per-draw only | Scene + Shaders/Common/Frame.slang | View/light/shadow data uploaded once per frame; the 128-byte push-constant limit never constrains again |
 | **48-byte interleaved `Vertex`** | Resource + Shaders/Common | One bindless slot per mesh, glTF-compatible |
 | **64-byte `MeshInstance`** (transform only in V1) | Resource | Aligns nicely, reserves space for future per-instance material data |
 | **Frames-in-flight = 2** | RHI | Modest GPU/CPU pipelining; simplifies sync |
@@ -134,6 +160,8 @@ Things every module agrees on so they compose without surprises:
 
 ## What lives where (rough lookup)
 
+- Want to spawn actors / build a scene / understand shadows? → [`Scene.md`](Scene.md)
+- Want to use or extend the editor overlay? → [`Editor.md`](Editor.md)
 - Want to draw a mesh? → [`Meshes.md`](Meshes.md)
 - Want to write a shader? → [`Shaders.md`](Shaders.md) (Slang language pointers) and [`Bindless.md`](Bindless.md) (how slots reach shaders)
 - Want to add a new pass to the render graph? → [`RenderGraph.md`](RenderGraph.md)
@@ -142,15 +170,14 @@ Things every module agrees on so they compose without surprises:
 - Want to wire keys / mouse? → [`Input.md`](Input.md)
 - Want to log? → [`Logging.md`](Logging.md)
 
-## Deliberate non-features (V1)
+## Deliberate non-features
 
-The plan is "rendering plumbing", not "Unreal-in-a-box". The following layers don't exist yet and won't be added until you (the game developer) need them:
+The plan is a solid foundation, not "Unreal-in-a-box". Present since the scene-graph branch: the world/actor scene graph (`Helio.Scene`), directional shadow mapping, the docking editor overlay (`Helio.Editor`), the app framework (`Helio.Gameplay`), and a math test suite (`Tests/MathTests.cpp`) that pins every convention. Still deliberately absent:
 
-- **Scene graph / world / actor system** — discussion in [`Meshes.md`](Meshes.md) about how the planned OOP layer would map onto current primitives. No code today.
-- **Material system** — `MeshInstanced.slang` is a verification path. Real materials are your job, built on the bindless texture path.
+- **Material system** — `Material` is four scalars + tints; real materials (textures, shader permutations) are future work on the bindless texture path.
 - **Asset pipeline** — no `.helmesh` cache format, no async streaming, no reference counting. Procedural primitives + (planned) glTF load are it.
-- **Physics, animation, audio, networking** — folders reserved as stubs; no engine code.
-- **Gameplay framework** — no `IGameMode`, no character base classes. `game/Source/main.cpp` calls Helio directly.
-- **Editor** — V1's architecture supports a future editor (Helio is a static lib, the render graph can target arbitrary textures for viewport embedding, shaders hot-reload), but no editor code is written.
+- **Physics, animation, audio, networking** — folders reserved; no engine code. The transform/quaternion math is final and physics-ready (Jolt / Box2D-v3-era integration is the next milestone).
+- **Cascaded shadow maps** — one fitted cascade today; the fitting math (`SceneRenderer::BuildShadowData`) is written per-cascade, so CSM is a split scheme + texture array + shader loop away, no math rework.
+- **Multi-viewport editor** — the editor docks inside the main window; ImGui multi-viewport (OS windows) needs renderer-backend work.
 
 When you start filling these in, the engine's job is to stay out of the way: stable handles, lifetime-safe registries, no forced inheritance — so your game code shapes the abstraction, not the other way around.

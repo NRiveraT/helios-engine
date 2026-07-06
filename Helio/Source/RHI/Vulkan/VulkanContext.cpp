@@ -1014,20 +1014,37 @@ TextureHandle VulkanContext::CreateTexture(const TextureDesc& Desc) {
     T.Width = Desc.Width;
     T.Height = Desc.Height;
     T.Depth = Desc.Depth;
-    T.MipLevels = Desc.MipLevels;
+
+    // Mip generation: compute the full chain length and add TRANSFER_SRC (the
+    // blit source) + TRANSFER_DST (the copy/blit dest). Only valid for a 2D
+    // non-array color texture with source data.
+    const bool GenMips = Desc.GenerateMips && Desc.InitialData &&
+                         Desc.Depth == 1 && Desc.ArrayLayers == 1;
+    uint32_t MipLevels = Desc.MipLevels;
+    if (GenMips) {
+        uint32_t Dim = Desc.Width > Desc.Height ? Desc.Width : Desc.Height;
+        MipLevels = 1;
+        while (Dim > 1) { Dim >>= 1; ++MipLevels; }
+    }
+
+    T.MipLevels = MipLevels;
     T.ArrayLayers = Desc.ArrayLayers;
     T.Usage = Desc.Usage;
     T.Fmt = ToVk(Desc.Fmt);
 
     TextureUsage UseExt = Desc.Usage;
     if (Desc.InitialData) UseExt = UseExt | TextureUsage::TransferDst;
+    if (GenMips) UseExt = UseExt | TextureUsage::TransferSrc | TextureUsage::TransferDst;
 
     VkImageCreateInfo ICI{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    ICI.imageType = (Desc.Depth > 1) ? VK_IMAGE_TYPE_3D :
-                    (Desc.Height > 1 ? VK_IMAGE_TYPE_2D : VK_IMAGE_TYPE_1D);
+    // Always 2D for non-volume textures — the view path only ever creates 2D /
+    // 2D_ARRAY / 3D views, and a 1D image with a 2D view is spec-invalid. An
+    // Nx1 texture (LUT / gradient ramp) is a perfectly valid 2D image, which
+    // is what every caller of a height-1 texture actually wants.
+    ICI.imageType = (Desc.Depth > 1) ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
     ICI.format = T.Fmt;
     ICI.extent = { Desc.Width, Desc.Height, Desc.Depth };
-    ICI.mipLevels = Desc.MipLevels;
+    ICI.mipLevels = MipLevels;
     ICI.arrayLayers = Desc.ArrayLayers;
     ICI.samples = VK_SAMPLE_COUNT_1_BIT;
     ICI.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -1047,7 +1064,7 @@ TextureHandle VulkanContext::CreateTexture(const TextureDesc& Desc) {
     VCI.format = T.Fmt;
     VCI.components = { VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY,
                        VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY };
-    VCI.subresourceRange = { AspectFor(Desc.Fmt), 0, Desc.MipLevels, 0, Desc.ArrayLayers };
+    VCI.subresourceRange = { AspectFor(Desc.Fmt), 0, MipLevels, 0, Desc.ArrayLayers };
     VK_CHECK(vkCreateImageView(m_device, &VCI, nullptr, &T.View));
 
     if (Desc.DebugName) {
@@ -1059,7 +1076,7 @@ TextureHandle VulkanContext::CreateTexture(const TextureDesc& Desc) {
     }
 
     if (Desc.InitialData) {
-        m_uploader->UploadToImage(T.Image, ICI.extent,
+        m_uploader->UploadToImage(T.Image, ICI.extent, MipLevels,
                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                   VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -1070,10 +1087,15 @@ TextureHandle VulkanContext::CreateTexture(const TextureDesc& Desc) {
     if (HasFlag(Desc.Usage, TextureUsage::Sampled)) {
         T.SampledSlot = m_bindless->AllocateSampledImage();
         HELIO_CHECK(T.SampledSlot != UINT32_MAX);
-        VkImageLayout L = (T.CurrentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                          ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                          : VK_IMAGE_LAYOUT_GENERAL;
-        m_bindless->WriteSampledImage(m_device, T.SampledSlot, T.View, L);
+        // The descriptor layout must match the layout the image is in WHEN
+        // it is actually sampled — and every sampled read goes through
+        // `TransitionForSampling` (the render graph's `.Read()`), which
+        // always lands on SHADER_READ_ONLY_OPTIMAL. Writing GENERAL here for
+        // attachment textures (created without InitialData) caused a
+        // descriptor/actual-layout mismatch the first time a render target
+        // or depth (shadow) map was sampled.
+        m_bindless->WriteSampledImage(m_device, T.SampledSlot, T.View,
+                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
     if (HasFlag(Desc.Usage, TextureUsage::Storage)) {
         T.StorageSlot = m_bindless->AllocateStorageImage();
@@ -1605,17 +1627,21 @@ void VulkanContext::TransitionForSamplingInternal(VulkanCommandListImpl* C, Text
     if (Tex->CurrentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) return;
 
     VkImageAspectFlags Aspect = VK_IMAGE_ASPECT_COLOR_BIT;
-    VkPipelineStageFlags2 SrcStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkAccessFlags2 SrcAccess = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
     if (Tex->Fmt == VK_FORMAT_D32_SFLOAT || Tex->Fmt == VK_FORMAT_D24_UNORM_S8_UINT) {
         Aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
         if (Tex->Fmt == VK_FORMAT_D24_UNORM_S8_UINT) Aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
-        SrcStage = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-        SrcAccess = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     }
+    // Conservative source scope: the previous writer could have been a color
+    // or depth attachment, a compute storage write (GENERAL), or a transfer
+    // blit/copy (TRANSFER_DST) — the caller (render graph .Read(), or an
+    // imperative TransitionForSampling) doesn't tell us which. Waiting on
+    // ALL_COMMANDS + MEMORY_WRITE and making it available covers every case,
+    // matching the conservative scope every other barrier helper in this file
+    // uses. (A tighter, layout-derived scope would be an optimization; getting
+    // it wrong is a silent sync hazard, so we stay conservative.)
     ImageBarrier(C->Cmd, Tex->Image, Aspect,
                  Tex->CurrentLayout, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                 SrcStage, SrcAccess,
+                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
     Tex->CurrentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;

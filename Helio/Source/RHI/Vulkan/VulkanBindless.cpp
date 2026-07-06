@@ -56,6 +56,27 @@ void VulkanBindless::CreateSamplers(VkDevice Device) {
     m_samplers[SamplerLinearWrap]  = MakeSampler(VK_FILTER_LINEAR,  VK_SAMPLER_ADDRESS_MODE_REPEAT);
     m_samplers[SamplerPointClamp]  = MakeSampler(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE);
     m_samplers[SamplerPointWrap]   = MakeSampler(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+
+    // Shadow comparison sampler: linear filter turns the hardware depth
+    // compare into 2x2 PCF per tap. GREATER_OR_EQUAL matches reverse-Z
+    // shadow maps (fragment is lit when its light-space depth is >= the
+    // stored caster depth). Border black = "far plane" outside the frustum,
+    // which the compare resolves to fully lit.
+    {
+        VkSamplerCreateInfo CI{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        CI.magFilter = VK_FILTER_LINEAR;
+        CI.minFilter = VK_FILTER_LINEAR;
+        CI.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        CI.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        CI.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        CI.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        CI.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+        CI.compareEnable = VK_TRUE;
+        CI.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
+        CI.minLod = 0.0f;
+        CI.maxLod = VK_LOD_CLAMP_NONE;
+        VK_CHECK(vkCreateSampler(Device, &CI, nullptr, &m_samplers[SamplerShadowLinear]));
+    }
 }
 
 void VulkanBindless::CreateLayout(VkDevice Device) {

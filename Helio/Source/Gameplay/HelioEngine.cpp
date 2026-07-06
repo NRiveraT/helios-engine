@@ -1,17 +1,19 @@
 #include "HelioEngine.h"
 
-#include <MeshPrimitives.h>
-#include <RenderGraph.h>
-#include <Debug/DebugDraw.h>
-#include <Logging/Log.h>
-#include <Profile/Profile.h>
-#include <Time/Clock.h>
+#include <Core/Profile/Profile.h>
 
-#include "Actors/DirectionalLight.h"
-#include "Actors/StaticMeshActor.h"
-#include "Gameplay/World/HelioWorld.h"
+#include <Input/Event.h>
+#include <Renderer/Debug/DebugDraw.h>
+#include <Resource/MeshPrimitives.h>
 
-using namespace helio;
+#include <Scene/Actors/Camera.h>
+#include <Scene/Actors/DirectionalLight.h>
+#include <Scene/Actors/StaticMeshActor.h>
+#include <Scene/HelioWorld.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 
 namespace helio::gameplay
 {
@@ -21,47 +23,129 @@ namespace helio::gameplay
 
         Window().Dispatcher().SetActionMap(&m_InputActionMap);
 
-        HelioWorld World(*this);
+        scene::HelioWorld World;
         m_Renderer.SetWorld(World);
+        m_Editor.SetWorld(&World);
+        m_Renderer.SetOverlayHook([this](render::RenderGraph& Rg, rhi::TextureHandle Target, uint32_t W, uint32_t H) { m_Editor.Render(Rg, Target, W, H); });
 
-        auto data = primitives::Cube(1.0f);
-        StaticMeshActor* Cuber = World.SpawnActor<StaticMeshActor>(MeshSystem().CreateMesh({.Data = &data, .DebugName = "Cuber"}));
-        Cuber->GetMaterial().AlbedoTint = float3(0.0f, 0.0f, 1.0f);
-        Cuber->GetMaterial().Metallic = 1.0f;
-        Cuber->GetMaterial().Roughness = 0.1f;
+        // ---- Test scene ----------------------------------------------------
+        using scene::StaticMeshActor;
 
-        auto sphere_data = primitives::Sphere(0.5f, 32, 16);
-        StaticMeshActor* SphereGuy = World.SpawnActor<StaticMeshActor>(MeshSystem().CreateMesh({.Data = &sphere_data, .DebugName = "SphereGuy"}));
-        SphereGuy->GetTransform().Position = float3(-2, 0, 0);
-        SphereGuy->GetMaterial().AlbedoTint = float3(1.0f, 0.0f, 0.0f);
-        SphereGuy->GetMaterial().Roughness = 0.2f;
+        // auto SphereData = resource::primitives::Sphere(0.5f, 32, 16);
+        // StaticMeshActor* Sphere = World.SpawnActorNamed<StaticMeshActor>("Sphere", MeshSystem().CreateMesh({.Data = &SphereData, .DebugName = "Sphere"}));
+        // Sphere->SetLocalPosition(float3(-2.0f, 0.0f, 0.0f));
+        // Sphere->GetMaterial().AlbedoTint = float3(1.0f, 0.0f, 0.0f);
+        // Sphere->GetMaterial().Roughness = 0.2f;
+        //
+        // // Hierarchy demo: a small moon parented to the sphere. It inherits the
+        // // sphere's bobbing + spin through the scene graph — zero code below.
+        // auto MoonData = resource::primitives::Sphere(0.15f, 16, 8);
+        // StaticMeshActor* Moon = World.SpawnActorNamed<StaticMeshActor>("Sphere.Moon", MeshSystem().CreateMesh({.Data = &MoonData, .DebugName = "Moon"}));
+        // Moon->AttachTo(*Sphere, scene::Actor::AttachRule::KeepLocal);
+        // Moon->SetLocalPosition(float3(0.9f, 0.35f, 0.0f));
+        // Moon->GetMaterial().AlbedoTint = float3(0.9f, 0.9f, 0.2f);
+        // Moon->GetMaterial().Roughness = 0.6f;
+        //
+        // auto CylinderData = resource::primitives::Cylinder(0.5f, 1, 16);
+        // StaticMeshActor* Cylinder = World.SpawnActorNamed<StaticMeshActor>("Cylinder", MeshSystem().CreateMesh({.Data = &CylinderData, .DebugName = "Cylinder"}));
+        // Cylinder->SetLocalPosition(float3(2.0f, 0.0f, 0.0f));
+        // Cylinder->GetMaterial().AlbedoTint = float3(0.0f, 1.0f, 0.0f);
+        // Cylinder->GetMaterial().Roughness = 0.6f;
+        //
+        // auto PlaneData = resource::primitives::Plane(10.0f, 10.0f);
+        // StaticMeshActor* Ground = World.SpawnActorNamed<StaticMeshActor>("Ground", MeshSystem().CreateMesh({.Data = &PlaneData, .DebugName = "Ground"}));
+        // Ground->SetLocalPosition(float3(0.0f, -1.0f, 0.0f));
+        // Ground->GetMaterial().AlbedoTint = float3(1.0f);
+        // Import a whole glTF model as one actor: LoadModel returns a section
+        // (mesh + its material, resolved from the glTF material at import) per
+        // primitive, and SetSections hands the lot to the actor in one call —
+        // set it and forget it.
+        StaticMeshActor* MeshActor = World.SpawnActorNamed<StaticMeshActor>("Helmet");
+        MeshActor->SetSections(MeshSystem().LoadModel("Assets/DamagedHelmet.glb"));
+        // Face the visor toward the camera's default view (it points +Z after
+        // the RH->LH import flip; a 180° yaw turns it around).
+        MeshActor->SetLocalRotation(QuatFromAxisAngle(float3(0.0f, 1.0f, 0.0f), math::Pi));
 
-        auto cylinder_data = primitives::Cylinder(0.5f, 1, 16);
-        StaticMeshActor* CylinderDude = World.SpawnActor<StaticMeshActor>(MeshSystem().CreateMesh({.Data = &cylinder_data, .DebugName = "CylinderDude"}));
-        CylinderDude->GetTransform().Position = float3(2, 0, 0);
-        CylinderDude->GetMaterial().AlbedoTint = float3(0.0f, 1.0f, 0.0f);
-        CylinderDude->GetMaterial().Roughness = 0.6f;
+        // Frame the camera on the imported model's combined bounds so we're not
+        // guessing at its scale/placement.
+        math::AABB ModelBounds;
+        for (const auto& Section : MeshActor->GetMeshSections())
+        {
+            if (Section.Mesh.Bounds.IsValid())
+            {
+                ModelBounds.Expand(Section.Mesh.Bounds);
+            }
+        }
 
-        auto plane_data = primitives::Plane(10.f, 10.f);
-        StaticMeshActor* PlaneMan = World.SpawnActor<StaticMeshActor>(MeshSystem().CreateMesh({.Data = &plane_data, .DebugName = "PlaneMan"}));
-        PlaneMan->GetTransform().Position = float3(0, -1, 0);
-        PlaneMan->GetMaterial().AlbedoTint = float3(1.f);
+        StaticMeshActor* Sponza = World.SpawnActorNamed<StaticMeshActor>("Sponza");
+        Sponza->SetSections(MeshSystem().LoadModel("Assets/Sponza/Sponza.glb"));
 
-        Camera* camera = World.SpawnActor<Camera>(m_Window.Width(), m_Window.Height());
-        camera->GetTransform().Position = float3(0, 0, -10);
-        m_Renderer.SetRenderingCamera(camera);
 
-        DirectionalLight* light = World.SpawnActor<DirectionalLight>();
-        const float4 Q0 = light->GetTransform().Rotation;
-        HELIO_LOG_INFO("Light", "AFTER-SPAWN Q=({}, {}, {}, {})",
-                       float(Q0.x), float(Q0.y), float(Q0.z), float(Q0.w));
-        light->GetTransform().RotateEuler(0, 0, 0);
+        //  // Imported mesh demo: load a glTF crate (deployed next to the binary)
+        // // and spawn an actor per primitive. Silently skipped if the asset is
+        // // missing, so the demo still runs without it.
+        // for (const resource::Mesh& CrateMesh : MeshSystem().LoadMeshes("Assets/Sponza.gltf"))
+        // {
+        //     // Sits on the ground plane (y = -1 + half-height 0.75), off to the
+        //     // left where it's clearly visible next to the primitives.
+        //     StaticMeshActor* Crate = World.SpawnActorNamed<StaticMeshActor>("Crate", CrateMesh);
+        //     Crate->SetLocalPosition(float3(-4.0f, -0.25f, 0.0f));
+        //     Crate->GetMaterial().AlbedoTint = float3(0.8f, 0.55f, 0.2f);
+        //     Crate->GetMaterial().Roughness = 0.85f;
+        // }
 
-        const float4 Q1 = light->GetTransform().Rotation;
-        HELIO_LOG_INFO("Light", "AFTER-ROTATE Q=({}, {}, {}, {})",
-                       float(Q1.x), float(Q1.y), float(Q1.z), float(Q1.w));
+        scene::Camera* Camera = World.SpawnActorNamed<scene::Camera>("Camera", m_Window.Width(), m_Window.Height());
+        if (ModelBounds.IsValid())
+        {
+            // Stand back from a compact object by a couple of its radii, along
+            // the camera's default forward (+Z), so the whole thing frames.
+            // NearZ scales with the model so precision holds at any size.
+            const float3 Center = ModelBounds.Center();
+            const float3 Ext = ModelBounds.Extents();
+            const float Radius = std::max(std::sqrt(float(hlslpp::dot(Ext, Ext))), 0.1f);
+            Camera->SetWorldPosition(Center - float3(0.0f, 0.0f, Radius * 2.4f));
+            Camera->SetNearZ(std::max(Radius * 0.01f, 0.01f));
+        }
+        else
+        {
+            Camera->SetWorldPosition(float3(0.0f, 0.0f, -10.0f));
+        }
+        m_CameraController.BindInput(m_InputActionMap);
 
-        float time = 0;
+        scene::DirectionalLight* Sun = World.SpawnActorNamed<scene::DirectionalLight>("Sun");
+        // Aim the sun down at ~50° with a bit of yaw. NOTE: SetWorldRotation
+        // takes a QUATERNION — build it from Euler angles with QuatFromEuler
+        // (pitch, yaw, roll in radians). Passing float4(euler...) directly is
+        // not a valid rotation. Interior scenes (Sponza) need a strong sun +
+        // healthy ambient to read, since most surfaces face away from the sun.
+        Sun->SetWorldRotation(QuatFromEuler(50.0f * math::DegToRad, 30.0f * math::DegToRad, 0.0f));
+        Sun->SetIntensity(4.0f);
+        Sun->SetAmbient(0.25f);
+
+        // Actors referenced across frames are held by stable id, never by raw
+        // pointer — the editor can destroy any actor, and a dangling raw
+        // pointer would be a use-after-free the next frame. Resolve each id
+        // through the world (which filters pending-destroy) right before use.
+        const uint64_t CameraId = Camera->Id();
+        // const uint64_t CubeId = Cube->Id();
+        // const uint64_t SphereId = Sphere->Id();
+        // const uint64_t CylinderId = Cylinder->Id();
+
+        // Coalesced window resize: SDL fires many WINDOW_RESIZED events during
+        // a drag; we record the latest size and apply it once per frame,
+        // before rendering, on the same thread that owns the GPU resources.
+        int PendingResizeW = 0, PendingResizeH = 0;
+        m_Window.Dispatcher().OnEvent([&](const input::InputEvent& E)
+        {
+            if (E.Type == input::InputEvent::Kind::WindowResize)
+            {
+                PendingResizeW = E.ResizeEv.Width;
+                PendingResizeH = E.ResizeEv.Height;
+            }
+        });
+
+        // ---- Main loop --------------------------------------------------------
+        float Time = 0.0f;
         while (true)
         {
             HELIO_PROFILE_FRAME();
@@ -69,26 +153,64 @@ namespace helio::gameplay
             const float Dt = static_cast<float>(m_EngineClock.Tick());
 
             m_Window.Dispatcher().BeginFrame();
-            helio::debug::Tick(Dt); // decay debug-draw lifetimes — without this, lifetime-0 items live forever
+            helio::debug::Tick(Dt); // decay debug-draw lifetimes
 
             if (!m_Window.PumpEvents())
             {
                 break;
             }
 
+            // Apply a pending resize before touching the GPU this frame. Skip
+            // zero sizes (minimize) — the offscreen targets keep their last
+            // valid extent and rendering resumes on restore.
+            if (PendingResizeW > 0 && PendingResizeH > 0 && (PendingResizeW != m_Renderer.GetWidth() || PendingResizeH != m_Renderer.GetHeight()))
+            {
+                m_RHI.WaitIdle();
+                m_RHI.Resize(PendingResizeW, PendingResizeH);
+                m_Renderer.Resize(PendingResizeW, PendingResizeH);
+                if (auto* Cam = static_cast<scene::Camera*>(World.FindActorById(CameraId)))
+                {
+                    Cam->SetViewport(PendingResizeW, PendingResizeH);
+                }
+            }
+
             m_Window.Dispatcher().FireHeld();
 
-            World.Tick(Dt);
-            time += Dt;
+            // Build the editor UI first — its capture state then gates the
+            // fly camera (clicks on editor windows must not fly the camera).
+            m_Editor.BeginFrame();
+            m_CameraController.SetEnabled(!m_Editor.WantsInput());
 
-            Cuber->GetTransform().RotateAxis(float3(0, 1, 0), 3.f * Dt);
-            SphereGuy->GetTransform().Position.y = (float)sin(time);
+            World.Tick(Dt); // may flush editor-requested actor deletions
+            Time += Dt;
 
-            CylinderDude->GetTransform().Rotation = QuatFromAxisAngle(float3(1, 0, 0), sin(time));
-            // light->GetTransform().Rotation = QuatFromAxisAngle(float3(1, 0, 0), sin(time));
+            // Re-resolve the camera AFTER Tick (an editor delete this frame is
+            // now flushed) and hand the fresh pointer to both consumers; either
+            // may be null and both handle it.
+            auto* Cam = static_cast<scene::Camera*>(World.FindActorById(CameraId));
+            m_Renderer.SetRenderingCamera(Cam);
+            m_CameraController.RetargetCamera(Cam);
+            m_CameraController.Update(m_Window, Dt);
+
+            // Scene animation — exercises world rotation, local position, and
+            // (through the moon) hierarchical transform propagation. Every
+            // actor is re-resolved by id and null-checked, so deleting any of
+            // them from the editor is safe.
+            // if (auto* A = static_cast<scene::StaticMeshActor*>(World.FindActorById(CubeId)))
+            //     A->AddWorldRotation(float3(0.0f, 1.0f, 0.0f), -0.5f * Dt);
+            // if (auto* A = static_cast<scene::StaticMeshActor*>(World.FindActorById(SphereId)))
+            // {
+            //     A->SetLocalPosition(float3(-2.0f, std::sin(Time), 0.0f));
+            //     A->AddWorldRotation(float3(0.0f, 1.0f, 0.0f), 1.5f * Dt);
+            // }
+            // if (auto* A = static_cast<scene::StaticMeshActor*>(World.FindActorById(CylinderId)))
+            //     A->SetLocalRotation(QuatFromAxisAngle(float3(1.0f, 0.0f, 0.0f), std::sin(Time)));
 
             m_Renderer.Render();
         }
         m_Renderer.WaitIdle();
+        m_Editor.SetWorld(nullptr); // World dies with this scope
+        m_Renderer.SetRenderingCamera(nullptr);
+        m_Renderer.SetOverlayHook({});
     }
-}
+} // namespace helio::gameplay

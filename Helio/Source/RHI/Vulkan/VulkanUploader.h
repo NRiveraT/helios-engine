@@ -28,10 +28,14 @@ public:
     /// Blocks until the GPU has completed the transfer.
     void UploadToBuffer(VkBuffer Dst, uint64_t Offset, const void* Data, uint64_t Size);
 
-    /// Copy a tightly-packed image (mip 0 / layer 0) into `Dst` at `Extent`.
-    /// `Dst` is transitioned UNDEFINED -> TRANSFER_DST -> `FinalLayout` and
-    /// the upload waits on the GPU. `BytesPerPixel` is the source pixel pitch.
-    void UploadToImage(VkImage Dst, VkExtent3D Extent, VkImageLayout FinalLayout,
+    /// Copy a tightly-packed image (mip 0 / layer 0) into `Dst` at `Extent`,
+    /// then generate `MipLevels - 1` lower mips by successive linear-filtered
+    /// blits (mip i-1 -> i, halving). `Dst` ends up entirely in `FinalLayout`;
+    /// the upload waits on the GPU. When `MipLevels == 1` this is a plain mip-0
+    /// upload (no blits). The image MUST have been created with usage
+    /// TRANSFER_SRC | TRANSFER_DST when `MipLevels > 1`.
+    void UploadToImage(VkImage Dst, VkExtent3D Extent, uint32_t MipLevels,
+                       VkImageLayout FinalLayout,
                        VkPipelineStageFlags2 FinalStage, VkAccessFlags2 FinalAccess,
                        const void* Data, uint64_t Size);
 

@@ -47,6 +47,12 @@ struct TextureDesc {
     /// Optional initial mip 0 / layer 0 upload, tightly packed.
     const void* InitialData{nullptr};
     uint64_t InitialDataSize{0};
+    /// Generate a full mip chain from `InitialData` at create time (successive
+    /// linear-filtered blits). Overrides `MipLevels` with the full count for
+    /// the given dimensions and implicitly adds TRANSFER_SRC usage. Requires
+    /// `InitialData`, a 2D non-array color texture. Off by default; turn on for
+    /// sampled material textures so they don't shimmer/alias at distance.
+    bool GenerateMips{false};
 };
 
 struct TextureHandle {

@@ -1,0 +1,17 @@
+﻿{
+  "asset": { "version": "2.0", "generator": "Helio test asset" },
+  "scenes": [ { "nodes": [0] } ],
+  "nodes": [ { "mesh": 0, "name": "Crate" } ],
+  "meshes": [ { "name": "Crate", "primitives": [ { "attributes": { "POSITION": 1, "NORMAL": 2 }, "indices": 0 } ] } ],
+  "buffers": [ { "byteLength": 648, "uri": "data:application/octet-stream;base64,AAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAAAAAvwAAQL8AAAA/AAAAPwAAQL8AAAA/AAAAPwAAQD8AAAA/AAAAvwAAQD8AAAA/AAAAPwAAQL8AAAC/AAAAvwAAQL8AAAC/AAAAvwAAQD8AAAC/AAAAPwAAQD8AAAC/AAAAPwAAQL8AAAA/AAAAPwAAQL8AAAC/AAAAPwAAQD8AAAC/AAAAPwAAQD8AAAA/AAAAvwAAQL8AAAC/AAAAvwAAQL8AAAA/AAAAvwAAQD8AAAA/AAAAvwAAQD8AAAC/AAAAvwAAQD8AAAA/AAAAPwAAQD8AAAA/AAAAPwAAQD8AAAC/AAAAvwAAQD8AAAC/AAAAvwAAQL8AAAC/AAAAPwAAQL8AAAC/AAAAPwAAQL8AAAA/AAAAvwAAQL8AAAA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAA" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 72, "target": 34963 },
+    { "buffer": 0, "byteOffset": 72, "byteLength": 288, "target": 34962 },
+    { "buffer": 0, "byteOffset": 360, "byteLength": 288, "target": 34962 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5123, "count": 36, "type": "SCALAR" },
+    { "bufferView": 1, "componentType": 5126, "count": 24, "type": "VEC3", "min": [-0.5,-0.75,-0.5], "max": [0.5,0.75,0.5] },
+    { "bufferView": 2, "componentType": 5126, "count": 24, "type": "VEC3" }
+  ]
+}

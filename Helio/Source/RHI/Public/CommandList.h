@@ -116,6 +116,11 @@ public:
     /// offscreen RT, or a half-res buffer.
     void SetViewport(uint32_t Width, uint32_t Height);
 
+    /// Set only the scissor rectangle, leaving the viewport untouched. UI
+    /// passes (Dear ImGui) clip each draw command with this. Coordinates are
+    /// framebuffer pixels, origin top-left.
+    void SetScissor(int32_t X, int32_t Y, uint32_t Width, uint32_t Height);
+
     // -------------------------------------------------------------------------
     // Submit a draw / dispatch.
     // -------------------------------------------------------------------------
@@ -145,10 +150,12 @@ public:
     // and shader-free fullscreen passthroughs.
     // -------------------------------------------------------------------------
 
-    /// Hardware blit `Src` into `Dst` with filtering. Handles all required
-    /// layout transitions internally (Src→TRANSFER_SRC, Dst→TRANSFER_DST,
-    /// then back to SHADER_READ_ONLY when the blit completes). Source and
-    /// destination extents come from the textures' descriptors.
+    /// Hardware blit `Src` into `Dst` with filtering. Transitions `Src` to
+    /// TRANSFER_SRC and `Dst` to TRANSFER_DST for the blit and LEAVES them in
+    /// those transfer layouts. To sample either afterward, call
+    /// `TransitionForSampling` on it first (or declare it as a `.Read()` in the
+    /// render graph, which does that for you). Source and destination extents
+    /// come from the textures' descriptors.
     void BlitImage(TextureHandle Src, TextureHandle Dst, BlitFilter Filter = BlitFilter::Linear);
 
     /// Bit-exact copy. Src and Dst must have the same dimensions + format.

@@ -106,6 +106,12 @@ public:
     /// action map binding.
     void Clear();
 
+    /// Reset only the polled state (held keys/buttons, deltas, wheel) —
+    /// subscribers and the action map stay. Call when an input consumer
+    /// changes (e.g. the editor UI starts swallowing events): otherwise a
+    /// key whose release the UI consumed reads as held-forever to gameplay.
+    void ResetHeldState() noexcept;
+
 private:
     ActionMap* m_actionMap{nullptr};
     std::vector<EventHandler> m_eventHandlers;

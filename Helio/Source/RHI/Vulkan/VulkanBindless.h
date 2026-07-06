@@ -28,7 +28,7 @@ public:
     static constexpr uint32_t MaxSampledImages   = 16'384;
     static constexpr uint32_t MaxStorageImages   = 4'096;
     static constexpr uint32_t MaxStorageBuffers  = 4'096;
-    static constexpr uint32_t SamplerCount       = 4;
+    static constexpr uint32_t SamplerCount       = 5;
 
     /// Binding indices (must match `Shaders/Common/Bindless.slang`).
     static constexpr uint32_t BindingSampledImages = 0;
@@ -43,6 +43,13 @@ public:
         SamplerLinearWrap  = 1,
         SamplerPointClamp  = 2,
         SamplerPointWrap   = 3,
+        /// Linear comparison sampler for shadow maps (hardware PCF).
+        /// CompareOp = GREATER_OR_EQUAL to match the engine's reverse-Z
+        /// convention (larger stored depth = closer to the light); border =
+        /// opaque black so samples outside the shadow frustum read "far" and
+        /// resolve to LIT. Access from shaders via `GetSamplerCmp` — a
+        /// `SamplerComparisonState` view aliasing this same binding.
+        SamplerShadowLinear = 4,
     };
 
     VulkanBindless(VkDevice Device);

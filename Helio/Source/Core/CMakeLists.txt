@@ -20,7 +20,6 @@ helio_add_module(Core
         Math/Math.cpp
         Math/Transform.cpp
         Types/EngineConfig.h
-        Types/PendingInstance.h
     PUBLIC_LINK
         spdlog::spdlog
         hlslpp

@@ -102,18 +102,21 @@ void VulkanUploader::UploadToBuffer(VkBuffer Dst, uint64_t Offset, const void* D
     EndAndSubmit(Cmd);
 }
 
-void VulkanUploader::UploadToImage(VkImage Dst, VkExtent3D Extent, VkImageLayout FinalLayout,
+void VulkanUploader::UploadToImage(VkImage Dst, VkExtent3D Extent, uint32_t MipLevels,
+                                   VkImageLayout FinalLayout,
                                    VkPipelineStageFlags2 FinalStage, VkAccessFlags2 FinalAccess,
                                    const void* Data, uint64_t Size) {
     if (Size == 0 || !Data) return;
+    if (MipLevels == 0) MipLevels = 1;
     EnsureStaging(Size);
     std::memcpy(m_stagingPtr, Data, Size);
 
     auto Cmd = BeginOneShot();
 
-    auto MakeBarrier = [&](VkImageLayout Old, VkImageLayout New,
-                           VkPipelineStageFlags2 SrcStage, VkAccessFlags2 SrcAccess,
-                           VkPipelineStageFlags2 DstStage, VkAccessFlags2 DstAccess) {
+    // Single-mip barrier helper (targets one mip level).
+    auto Barrier = [&](uint32_t Mip, VkImageLayout Old, VkImageLayout New,
+                       VkPipelineStageFlags2 SrcStage, VkAccessFlags2 SrcAccess,
+                       VkPipelineStageFlags2 DstStage, VkAccessFlags2 DstAccess) {
         VkImageMemoryBarrier2 B{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
         B.srcStageMask = SrcStage;  B.srcAccessMask = SrcAccess;
         B.dstStageMask = DstStage;  B.dstAccessMask = DstAccess;
@@ -121,34 +124,74 @@ void VulkanUploader::UploadToImage(VkImage Dst, VkExtent3D Extent, VkImageLayout
         B.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         B.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         B.image = Dst;
-        B.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        return B;
+        B.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, Mip, 1, 0, 1 };
+        VkDependencyInfo D{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        D.imageMemoryBarrierCount = 1;
+        D.pImageMemoryBarriers = &B;
+        vkCmdPipelineBarrier2(Cmd, &D);
     };
 
-    auto B1 = MakeBarrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
-                          VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    VkDependencyInfo D1{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    D1.imageMemoryBarrierCount = 1;
-    D1.pImageMemoryBarriers = &B1;
-    vkCmdPipelineBarrier2(Cmd, &D1);
+    // 1) All mips UNDEFINED -> TRANSFER_DST (mip 0 for the copy; lower mips are
+    //    blit targets and get overwritten before they're read).
+    {
+        VkImageMemoryBarrier2 B{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        B.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT; B.srcAccessMask = 0;
+        B.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;        B.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        B.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;              B.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        B.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;      B.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        B.image = Dst;
+        B.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, MipLevels, 0, 1 };
+        VkDependencyInfo D{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        D.imageMemoryBarrierCount = 1;
+        D.pImageMemoryBarriers = &B;
+        vkCmdPipelineBarrier2(Cmd, &D);
+    }
 
+    // 2) Copy the source pixels into mip 0.
     VkBufferImageCopy Region{};
-    Region.bufferOffset = 0;
-    Region.bufferRowLength = 0;
-    Region.bufferImageHeight = 0;
     Region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
     Region.imageOffset = { 0, 0, 0 };
     Region.imageExtent = Extent;
     vkCmdCopyBufferToImage(Cmd, m_staging, Dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &Region);
 
-    auto B2 = MakeBarrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, FinalLayout,
-                          VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                          FinalStage, FinalAccess);
-    VkDependencyInfo D2{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    D2.imageMemoryBarrierCount = 1;
-    D2.pImageMemoryBarriers = &B2;
-    vkCmdPipelineBarrier2(Cmd, &D2);
+    // 3) Generate the mip chain: blit each level down to the next, halving.
+    int32_t MipW = static_cast<int32_t>(Extent.width);
+    int32_t MipH = static_cast<int32_t>(Extent.height);
+    for (uint32_t I = 1; I < MipLevels; ++I) {
+        // Source mip (I-1): TRANSFER_DST -> TRANSFER_SRC so we can read it.
+        Barrier(I - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+
+        const int32_t DstW = MipW > 1 ? MipW / 2 : 1;
+        const int32_t DstH = MipH > 1 ? MipH / 2 : 1;
+
+        VkImageBlit Blit{};
+        Blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, I - 1, 0, 1 };
+        Blit.srcOffsets[0] = { 0, 0, 0 };
+        Blit.srcOffsets[1] = { MipW, MipH, 1 };
+        Blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, I, 0, 1 };
+        Blit.dstOffsets[0] = { 0, 0, 0 };
+        Blit.dstOffsets[1] = { DstW, DstH, 1 };
+        vkCmdBlitImage(Cmd,
+                       Dst, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       Dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       1, &Blit, VK_FILTER_LINEAR);
+
+        // Source mip (I-1) is done — move it straight to the final layout.
+        Barrier(I - 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, FinalLayout,
+                VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                FinalStage, FinalAccess);
+
+        MipW = DstW;
+        MipH = DstH;
+    }
+
+    // 4) The last mip is still TRANSFER_DST (copy target for the smallest
+    //    level, or mip 0 itself when MipLevels == 1) — transition it too.
+    Barrier(MipLevels - 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, FinalLayout,
+            VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            FinalStage, FinalAccess);
 
     EndAndSubmit(Cmd);
 }

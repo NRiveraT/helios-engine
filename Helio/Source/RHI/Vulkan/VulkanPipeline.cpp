@@ -175,6 +175,13 @@ VulkanPipeline VulkanPipelineFactory::CreateGraphics(const GraphicsPipelineDesc&
                        ? VK_FRONT_FACE_CLOCKWISE
                        : VK_FRONT_FACE_COUNTER_CLOCKWISE;
     Rast.lineWidth = 1.0f;
+    // Static depth bias (shadow passes). Sign convention documented on
+    // GraphicsPipelineDesc — negative values push away from the light under
+    // reverse-Z.
+    Rast.depthBiasEnable = (Desc.DepthBiasConstant != 0.0f || Desc.DepthBiasSlope != 0.0f);
+    Rast.depthBiasConstantFactor = Desc.DepthBiasConstant;
+    Rast.depthBiasSlopeFactor = Desc.DepthBiasSlope;
+    Rast.depthBiasClamp = 0.0f;
 
     VkPipelineMultisampleStateCreateInfo MS{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     MS.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
@@ -188,6 +195,17 @@ VulkanPipeline VulkanPipelineFactory::CreateGraphics(const GraphicsPipelineDesc&
     for (uint32_t I = 0; I < Desc.ColorAttachmentCount; ++I) {
         Att[I].colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
                               | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        if (Desc.Blend != BlendMode::None) {
+            Att[I].blendEnable = VK_TRUE;
+            Att[I].srcColorBlendFactor = (Desc.Blend == BlendMode::Alpha)
+                                           ? VK_BLEND_FACTOR_SRC_ALPHA
+                                           : VK_BLEND_FACTOR_ONE;
+            Att[I].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            Att[I].colorBlendOp = VK_BLEND_OP_ADD;
+            Att[I].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            Att[I].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            Att[I].alphaBlendOp = VK_BLEND_OP_ADD;
+        }
     }
     VkPipelineColorBlendStateCreateInfo CB{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     CB.attachmentCount = Desc.ColorAttachmentCount;

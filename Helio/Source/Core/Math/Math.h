@@ -5,9 +5,16 @@
 /// matching the Slang shader code 1:1. This keeps CPU and GPU math
 /// visually identical.
 ///
-/// Coordinate conventions:
+/// Coordinate conventions (see Docs/Architecture.md — these are engine-wide
+/// invariants, every projection builder in this file obeys ALL of them):
 /// - Left-handed (+X right, +Y up, +Z forward)
-/// - Reverse-Z perspective (near=1, far=0) for best depth precision on Vulkan
+/// - Column-vector matrices: `mul(M, v)`, translation in column 3
+/// - Reverse-Z clip space (near=1, far=0) for best depth precision —
+///   pipelines use `DepthCompare::Greater` and clear depth to 0.0
+/// - Y is negated in EVERY projection so world-up = screen-up under
+///   Vulkan's Y-down framebuffer. This flips triangle winding in clip
+///   space, so every 3D pipeline uses `FrontFace::Clockwise`. One rule,
+///   no per-projection exceptions.
 #pragma once
 
 #include <hlslpp/hlsl++.h>
@@ -32,23 +39,39 @@ using hlslpp::float4x4;
 
 namespace math {
 
+inline constexpr float Pi = 3.14159265358979323846f;
+inline constexpr float TwoPi = 2.0f * Pi;
+inline constexpr float HalfPi = 0.5f * Pi;
+inline constexpr float DegToRad = Pi / 180.0f;
+inline constexpr float RadToDeg = 180.0f / Pi;
+
 /// Left-handed look-at view matrix.
+///
+/// Robust against a degenerate `Up` (parallel or anti-parallel to the view
+/// direction): falls back to +Y, then +Z, so a camera or light looking
+/// straight up/down still produces an orthonormal basis instead of NaNs.
 [[nodiscard]] float4x4 LookAtLH(float3 Eye, float3 Target, float3 Up);
 
 /// Reverse-Z infinite-far perspective. Depth maps near=1 -> +inf=0.
 /// Pass NearZ small (e.g. 0.01f) to keep precision at distance.
 [[nodiscard]] float4x4 PerspectiveReverseZLH(float FovYRadians, float Aspect, float NearZ);
 
-/// Left-handed orthographic projection, centered on the view-space origin.
-/// `Width` and `Height` are the full frustum extents (x maps from `-W/2..+W/2`
-/// to clip `-1..+1`, same for y). Depth maps `NearZ -> 0`, `FarZ -> 1` in
-/// Vulkan-style `[0, 1]` clip-z (forward-Z, NOT reverse-Z — pair with
-/// `DepthCompare::Less` or invert at the comparison site if mixing with the
-/// reverse-Z perspective pipeline).
+/// Left-handed reverse-Z orthographic projection, centered on the view-space
+/// origin. `Width`/`Height` are full frustum extents in view-space units
+/// (x maps `-W/2..+W/2` to clip `-1..+1`). Depth maps `NearZ -> 1`,
+/// `FarZ -> 0` and Y is negated — the SAME clip-space conventions as
+/// `PerspectiveReverseZLH`, so pipelines keep `FrontFace::Clockwise` +
+/// `DepthCompare::Greater` + clear-depth 0.0 regardless of projection.
 ///
-/// Primary use: shadow-map projections for directional lights, where parallel
-/// rays demand an orthographic (not perspective) frustum.
-[[nodiscard]] float4x4 OrthoLH(float Width, float Height, float NearZ, float FarZ);
+/// Primary use: shadow-map projections for directional lights.
+[[nodiscard]] float4x4 OrthoReverseZLH(float Width, float Height, float NearZ, float FarZ);
+
+/// Off-center variant: maps view-space x in `[Left, Right]` and y in
+/// `[Bottom, Top]` onto the clip cube, with the same Y-negation and
+/// reverse-Z depth mapping as `OrthoReverseZLH`. This is the general tool
+/// for fitting a light frustum to an arbitrary view-space bounding box.
+[[nodiscard]] float4x4 OrthoOffCenterReverseZLH(
+    float Left, float Right, float Bottom, float Top, float NearZ, float FarZ);
 
 // ---- Transform builders ---------------------------------------------------
 
@@ -67,15 +90,29 @@ namespace math {
 [[nodiscard]] float4x4 TRS(float3 T, const float4x4& R, float3 S);
 
 /// Axis-aligned bounding box.
+///
+/// Default-constructed state is EMPTY (Min = +huge, Max = -huge), which is
+/// the identity for `Expand` — you can start from `AABB{}` and fold points
+/// or boxes in without seeding. Test with `IsValid()` before using extents.
 struct AABB {
-    float3 Min;
-    float3 Max;
+    float3 Min{+3.402823466e+38f, +3.402823466e+38f, +3.402823466e+38f};
+    float3 Max{-3.402823466e+38f, -3.402823466e+38f, -3.402823466e+38f};
+
+    /// False for the empty (default) state where Min > Max on any axis.
+    [[nodiscard]] bool IsValid() const;
 
     [[nodiscard]] float3 Center() const;
     [[nodiscard]] float3 Extents() const;
     [[nodiscard]] bool Contains(float3 P) const;
+    /// Corner `I` in [0, 8): bit 0 = x, bit 1 = y, bit 2 = z (0 = Min, 1 = Max).
+    [[nodiscard]] float3 Corner(int I) const;
     void Expand(float3 P);
     void Expand(const AABB& Other);
+
+    /// Exact AABB of this box transformed by an affine matrix (Arvo's method:
+    /// per-axis, accumulate min/max contributions of each basis column).
+    /// Empty boxes stay empty.
+    [[nodiscard]] AABB Transformed(const float4x4& M) const;
 };
 
 } // namespace math

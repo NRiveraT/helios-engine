@@ -173,6 +173,14 @@ bool Window::PumpEvents() {
 
     SDL_Event Ev;
     while (SDL_PollEvent(&Ev)) {
+        // Native hook (editor UI) sees every event first and may consume it —
+        // EXCEPT close intent, which must always register.
+        const bool IsCloseEvent =
+            Ev.type == SDL_EVENT_QUIT || Ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED;
+        if (m_nativeEventHook && m_nativeEventHook(&Ev) && !IsCloseEvent) {
+            continue;
+        }
+
         input::InputEvent Out{};
         bool Push = true;
 

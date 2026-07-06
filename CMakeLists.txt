@@ -22,5 +22,7 @@ option(HELIO_VALIDATION "Enable Vulkan validation layers" ON)
 include(Helio/Tools/Build/EngineHelpers.cmake)
 include(Helio/Tools/Build/CompileShaders.cmake)
 
+enable_testing()
+
 add_subdirectory(Helio)
 add_subdirectory(game)
