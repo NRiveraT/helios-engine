@@ -22,13 +22,12 @@
 
 namespace helio::editor
 {
-    EditorOverlay::EditorOverlay(platform::windows::Window& Win, rhi::Device& Dev,
-                                 scene::SceneRenderer& Renderer, rhi::Format TargetFormat)
+    EditorOverlay::EditorOverlay(platform::windows::Window& Win, rhi::Device& Dev, scene::SceneRenderer& Renderer, rhi::Format TargetFormat)
         : m_Window(&Win)
-        , m_Dev(&Dev)
-        , m_SceneRenderer(&Renderer)
-        , m_Ctx((IMGUI_CHECKVERSION(), ImGui::CreateContext()))
-        , m_Renderer(Dev, TargetFormat) // needs the context: builds the font atlas
+          , m_Dev(&Dev)
+          , m_SceneRenderer(&Renderer)
+          , m_Ctx((IMGUI_CHECKVERSION(), ImGui::CreateContext()))
+          , m_Renderer(Dev, TargetFormat) // needs the context: builds the font atlas
     {
         ImGuiIO& IO = ImGui::GetIO();
         IO.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
@@ -43,8 +42,7 @@ namespace helio::editor
 
         ImGui_ImplSDL3_InitForVulkan(Win.Native());
 
-        Win.SetNativeEventHook(
-            [this](const void* E) { return HandleNativeEvent(E); });
+        Win.SetNativeEventHook([this](const void* E) { return HandleNativeEvent(E); });
 
         HELIO_LOG_INFO("Editor", "Editor overlay ready — press F1 to toggle.");
     }
@@ -113,21 +111,21 @@ namespace helio::editor
         const ImGuiIO& IO = ImGui::GetIO();
         switch (Ev->type)
         {
-            // RELEASES are never consumed: a key/button whose release ImGui
-            // swallowed would stay "held" forever in the gameplay dispatcher
-            // (stuck-key bug). Presses/motion are gated on ImGui's capture.
-            case SDL_EVENT_KEY_UP:
-            case SDL_EVENT_MOUSE_BUTTON_UP:
-                return false;
-            case SDL_EVENT_KEY_DOWN:
-            case SDL_EVENT_TEXT_INPUT:
-                return IO.WantCaptureKeyboard;
-            case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            case SDL_EVENT_MOUSE_MOTION:
-            case SDL_EVENT_MOUSE_WHEEL:
-                return IO.WantCaptureMouse;
-            default:
-                return false;
+        // RELEASES are never consumed: a key/button whose release ImGui
+        // swallowed would stay "held" forever in the gameplay dispatcher
+        // (stuck-key bug). Presses/motion are gated on ImGui's capture.
+        case SDL_EVENT_KEY_UP:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            return false;
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_TEXT_INPUT:
+            return IO.WantCaptureKeyboard;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_MOTION:
+        case SDL_EVENT_MOUSE_WHEEL:
+            return IO.WantCaptureMouse;
+        default:
+            return false;
         }
     }
 
@@ -187,7 +185,7 @@ namespace helio::editor
             ImGui::DockBuilderRemoveNode(DockspaceId);
             ImGui::DockBuilderAddNode(DockspaceId,
                                       ImGuiDockNodeFlags_DockSpace |
-                                          ImGuiDockNodeFlags_PassthruCentralNode);
+                                      ImGuiDockNodeFlags_PassthruCentralNode);
             ImGui::DockBuilderSetNodeSize(DockspaceId, ImGui::GetMainViewport()->WorkSize);
 
             ImGuiID Center = DockspaceId;
@@ -221,8 +219,8 @@ namespace helio::editor
     void EditorOverlay::DrawSceneNode(scene::Actor& A)
     {
         ImGuiTreeNodeFlags Flags = ImGuiTreeNodeFlags_OpenOnArrow |
-                                   ImGuiTreeNodeFlags_SpanAvailWidth |
-                                   ImGuiTreeNodeFlags_DefaultOpen;
+            ImGuiTreeNodeFlags_SpanAvailWidth |
+            ImGuiTreeNodeFlags_DefaultOpen;
         if (A.GetChildren().empty())
         {
             Flags |= ImGuiTreeNodeFlags_Leaf;
@@ -344,7 +342,7 @@ namespace helio::editor
         }
         if (ImGui::DragFloat3("Rotation (P/Y/R)", m_EulerCache, 0.5f))
         {
-            Selected->SetLocalRotation(QuatFromEuler(m_EulerCache[0] * math::DegToRad, m_EulerCache[1] * math::DegToRad,m_EulerCache[2] * math::DegToRad));
+            Selected->SetLocalRotation(QuatFromEuler(m_EulerCache[0] * math::DegToRad, m_EulerCache[1] * math::DegToRad, m_EulerCache[2] * math::DegToRad));
         }
         m_EulerEditing = ImGui::IsItemActive();
 
@@ -391,7 +389,8 @@ namespace helio::editor
                     // Live texture thumbnails — the ImGui backend uses a
                     // texture's bindless SampledSlot as its ImTextureID, so any
                     // loaded material texture displays for free.
-                    const auto Thumb = [](const char* Label, uint32_t Slot) {
+                    const auto Thumb = [](const char* Label, uint32_t Slot)
+                    {
                         if (Slot == resource::kNoTexture) return;
                         ImGui::Image(static_cast<ImTextureID>(Slot), ImVec2(48, 48));
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s (slot %u)", Label, Slot);
@@ -456,6 +455,7 @@ namespace helio::editor
             return;
         }
 
+        ImGui::Text("FPS: %.2f", ImGui::GetIO().Framerate);
         ImGui::Text("CPU render  %.2f ms", m_SceneRenderer->LastRenderCpuMs());
         ImGui::Text("GPU frame   %.2f ms", m_Dev->LastFrameGpuMs());
         if (m_World != nullptr)
@@ -463,6 +463,27 @@ namespace helio::editor
             ImGui::Text("Actors      %zu", m_World->GetActors().size());
         }
         ImGui::Separator();
+
+        const char* DebugViewMode[3] = {"Lit", "Depth", "WorldNormal"};
+
+        if (ImGui::BeginCombo("Debug View Mode", DebugViewMode[m_SceneRenderer->GetDebugViewMode()]))
+        {
+            for (int n = 0, n_end = IM_ARRAYSIZE(DebugViewMode); n < n_end; n++)
+            {
+                const bool is_selected = (m_SceneRenderer->GetDebugViewMode() == n);
+                if (ImGui::Selectable(DebugViewMode[n], is_selected))
+                {
+                    m_SceneRenderer->SetDebugViewMode(n);
+                }
+                
+                if (is_selected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
         ImGui::TextDisabled("F1 toggles editor. Hold RMB in the viewport to fly (WASD/EQ).");
 
         ImGui::End();

@@ -85,7 +85,7 @@ namespace helio::editor
         ImGuiContext* m_Ctx = nullptr;
         ImGuiRenderer m_Renderer;
 
-        bool m_Visible = false;
+        bool m_Visible = true;
         bool m_FrameActive = false;
         bool m_BuildDefaultLayout = false;
 

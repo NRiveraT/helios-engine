@@ -4,6 +4,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -55,8 +56,7 @@ namespace helio::editor
         m_Dev->DestroyPipeline(m_Pipeline);
     }
 
-    void ImGuiRenderer::Render(render::RenderGraph& Rg, rhi::TextureHandle Target,
-                               ImDrawData* DrawData, uint32_t Width, uint32_t Height)
+    void ImGuiRenderer::Render(render::RenderGraph& Rg, rhi::TextureHandle Target, ImDrawData* DrawData, uint32_t Width, uint32_t Height)
     {
         if (DrawData == nullptr || DrawData->CmdListsCount == 0 ||
             DrawData->DisplaySize.x <= 0.0f || DrawData->DisplaySize.y <= 0.0f)
@@ -64,10 +64,8 @@ namespace helio::editor
             return;
         }
 
-        const uint64_t VtxBytes =
-            static_cast<uint64_t>(DrawData->TotalVtxCount) * sizeof(ImDrawVert);
-        const uint64_t IdxBytes =
-            static_cast<uint64_t>(DrawData->TotalIdxCount) * sizeof(ImDrawIdx);
+        const uint64_t VtxBytes = static_cast<uint64_t>(DrawData->TotalVtxCount) * sizeof(ImDrawVert);
+        const uint64_t IdxBytes = static_cast<uint64_t>(DrawData->TotalIdxCount) * sizeof(ImDrawIdx);
         static_assert(sizeof(ImDrawIdx) == 2, "ImGuiPass.slang pulls u16 indices");
         static_assert(sizeof(ImDrawVert) == 20, "ImGuiPass.slang assumes 20-byte ImDrawVert");
 
@@ -75,9 +73,7 @@ namespace helio::editor
         {
             if (!m_WarnedOverflow)
             {
-                HELIO_LOG_WARN("Editor",
-                               "ImGui draw data exceeds ring capacity ({} vtx B, {} idx B) — UI skipped",
-                               VtxBytes, IdxBytes);
+                HELIO_LOG_WARN("Editor", "ImGui draw data exceeds ring capacity ({} vtx B, {} idx B) — UI skipped", VtxBytes, IdxBytes);
                 m_WarnedOverflow = true;
             }
             return;
@@ -111,12 +107,8 @@ namespace helio::editor
         for (int L = 0; L < DrawData->CmdListsCount; ++L)
         {
             const ImDrawList* List = DrawData->CmdLists[L];
-            m_VertexRing.Write(static_cast<uint64_t>(BaseVtx) * sizeof(ImDrawVert),
-                               List->VtxBuffer.Data,
-                               static_cast<uint64_t>(List->VtxBuffer.Size) * sizeof(ImDrawVert));
-            m_IndexRing.Write(static_cast<uint64_t>(BaseIdx) * sizeof(ImDrawIdx),
-                              List->IdxBuffer.Data,
-                              static_cast<uint64_t>(List->IdxBuffer.Size) * sizeof(ImDrawIdx));
+            m_VertexRing.Write(static_cast<uint64_t>(BaseVtx) * sizeof(ImDrawVert), List->VtxBuffer.Data, static_cast<uint64_t>(List->VtxBuffer.Size) * sizeof(ImDrawVert));
+            m_IndexRing.Write(static_cast<uint64_t>(BaseIdx) * sizeof(ImDrawIdx), List->IdxBuffer.Data, static_cast<uint64_t>(List->IdxBuffer.Size) * sizeof(ImDrawIdx));
 
             for (const ImDrawCmd& Cmd : List->CmdBuffer)
             {
@@ -133,10 +125,10 @@ namespace helio::editor
                 float Y0 = (Cmd.ClipRect.y - ClipOff.y) * ScaleY;
                 float X1 = (Cmd.ClipRect.z - ClipOff.x) * ScaleX;
                 float Y1 = (Cmd.ClipRect.w - ClipOff.y) * ScaleY;
-                if (X0 < 0.0f) X0 = 0.0f;
-                if (Y0 < 0.0f) Y0 = 0.0f;
-                if (X1 > static_cast<float>(Width)) X1 = static_cast<float>(Width);
-                if (Y1 > static_cast<float>(Height)) Y1 = static_cast<float>(Height);
+                X0 = std::max(X0, 0.0f);
+                Y0 = std::max(Y0, 0.0f);
+                X1 = std::min(X1, static_cast<float>(Width));
+                Y1 = std::min(Y1, static_cast<float>(Height));
                 if (X1 <= X0 || Y1 <= Y0 || Cmd.ElemCount == 0)
                 {
                     continue;

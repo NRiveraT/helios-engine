@@ -115,11 +115,13 @@ namespace helio::scene
         [[nodiscard]] int GetWidth() const noexcept { return m_Width; }
         [[nodiscard]] int GetHeight() const noexcept { return m_Height; }
 
+        uint32_t GetDebugViewMode() const noexcept { return m_DebugViewMode; }
+        
         /// Queue one instance of `M` for this frame. `WorldTransform` is the
         /// actor's WORLD transform (the scene graph already composed parents).
-        void SubmitMesh(const resource::Mesh& M, const resource::Material& Mat,
-                        const Transform& WorldTransform);
+        void SubmitMesh(const resource::Mesh& M, const resource::Material& Mat, const Transform& WorldTransform);
 
+        [[nodiscard]] void SetDebugViewMode(uint32_t Mode) noexcept { m_DebugViewMode = Mode; }
         /// CPU time spent inside the previous `Render()` call, in ms — for
         /// editor stats (GPU time comes from `Device::LastFrameGpuMs`).
         [[nodiscard]] double LastRenderCpuMs() const noexcept { return m_LastCpuMs; }

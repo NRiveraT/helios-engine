@@ -153,7 +153,7 @@ private:
     Glyph    m_glyphs[kMaxGlyphsPerFrame]{};
     uint32_t m_glyphCount{0};
     bool     m_visible{true};
-    bool     m_advanced{false};
+    bool     m_advanced{true};
 
     // Rolling CPU-ms history for percentile lows + frametime graph.
     static constexpr uint32_t kFrametimeHistory = 240;
