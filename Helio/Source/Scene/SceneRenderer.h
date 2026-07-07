@@ -125,6 +125,8 @@ namespace helio::scene
         [[nodiscard]] double LastRenderCpuMs() const noexcept { return m_LastCpuMs; }
 
     private:
+        uint32_t m_DebugViewMode = 2;
+        
         /// Everything the shadow pass + mesh pass need to know about the sun.
         struct ShadowData
         {
@@ -137,6 +139,8 @@ namespace helio::scene
         [[nodiscard]] ShadowData BuildShadowData(const DirectionalLight& Light) const;
         void BatchMeshInstances();
 
+        [[nodiscard]] void PrepSSAOData();
+        
         rhi::Device* m_RHI;
 
         rhi::TextureHandle m_ColorTexture;
@@ -144,14 +148,20 @@ namespace helio::scene
         rhi::TextureHandle m_DepthTexture;
         rhi::TextureHandle m_ShadowMapTexture;
 
+        rhi::TextureHandle m_PostProcessColor;
+
         // WIP
         rhi::TextureHandle m_AO;
-
+        
         rhi::PipelineHandle m_DepthPrepassPipeline;
 
         rhi::PipelineHandle m_MeshPipeline;
         rhi::PipelineHandle m_ShadowMapPipeline;
 
+        rhi::PipelineHandle m_PostProcessPipeline;
+
+        rhi::PipelineHandle m_DebugViewModePipeline;
+        
         render::overlay::Overlay m_Overlay;
         render::debug::DebugDraw m_DebugDraw;
 

@@ -74,6 +74,8 @@ public:
     PassBuilder& ColorLoad(TextureHandle h);
     
     PassBuilder& Depth(TextureHandle h, float ClearDepth = 0.0f);
+    
+    PassBuilder& DepthLoad(TextureHandle h);
     /// Set the user callback for this pass. Required.
     void Execute(std::function<void(CommandList&)> Fn);
 

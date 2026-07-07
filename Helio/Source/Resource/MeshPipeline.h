@@ -52,9 +52,31 @@ struct MeshInstancedPushConsts {
     uint32_t   EmissiveTex;        // 60
     uint32_t   OcclusionTex;       // 64
 };
-static_assert(sizeof(MeshInstancedPushConsts) == 68,
-              "must match the PC block in Shaders/Passes/MeshInstanced.slang");
+static_assert(sizeof(MeshInstancedPushConsts) == 68, "must match the PC block in Shaders/Passes/MeshInstanced.slang");
 
+struct DepthPrepassPushConsts
+{
+    uint32_t FrameSlot;
+    uint32_t VertexBufferSlot;
+    uint32_t InstanceBufferSlot;
+    uint32_t InstanceBase;
+};
+static_assert(sizeof(DepthPrepassPushConsts) == 16, "must match the PC block in Shaders/Passes/DepthPrepass.slang");
+
+struct PostProcessPushConstants
+{
+    uint32_t SourceSlot;
+};
+
+struct DebugViewPushConst
+{
+    uint32_t Mode; // 1 = depth, 2 = world normal,
+    uint32_t SourceSlot;
+    float NearZ;
+    float DebugFar;
+};
+    static_assert(sizeof(DebugViewPushConst) == 16, "must match the PC block in Shaders/Debug/DebugViewMode.slang");
+    
 /// CPU mirror of the `PC` struct in `Shaders/Passes/ShadowMap.slang`.
 /// The light's view-projection comes from FrameConstants.
 struct ShadowMapPushConsts {
@@ -63,8 +85,7 @@ struct ShadowMapPushConsts {
     uint32_t InstanceBufferSlot; //  8
     uint32_t InstanceBase;       // 12
 };
-static_assert(sizeof(ShadowMapPushConsts) == 16,
-              "must match the PC block in Shaders/Passes/ShadowMap.slang");
+static_assert(sizeof(ShadowMapPushConsts) == 16, "must match the PC block in Shaders/Passes/ShadowMap.slang");
 
 /// Description for `CreateMeshInstancedPipeline`. Most fields default to
 /// "draw onto an opaque LH reverse-Z color+depth target".
@@ -74,9 +95,9 @@ struct MeshInstancedPipelineDesc {
     rhi::Format DepthFormat{rhi::Format::D32_SFLOAT};
     rhi::CullMode Cull{rhi::CullMode::Back};
     /// Reverse-Z by default: clear depth to 0.0 at far, write 1.0 at near.
-    rhi::CompareOp DepthCompare{rhi::CompareOp::Greater};
+    rhi::CompareOp DepthCompare{rhi::CompareOp::GreaterEq};
     bool          DepthTest {true};
-    bool          DepthWrite{true};
+    bool          DepthWrite{false};
     /// Default `Clockwise` because every projection in `Core/Math` negates Y
     /// to get world-up = screen-up under Vulkan's Y-down framebuffer. That
     /// negation flips the signed-area sign of every triangle, so what was

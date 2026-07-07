@@ -41,8 +41,6 @@ void CommandList::BeginRenderingToSwapchain(float R, float G, float B, float A) 
 void CommandList::BeginRendering(const ColorAttachment* Colors, uint32_t NumColors, const DepthAttachment* Depth) {
     auto* Impl = I(*this);
     HELIO_CHECK(Impl && !Impl->InRendering);
-    HELIO_LOG_INFO("Renderer Texture Check", "NumColors {}", NumColors);
-
     Impl->Ctx->BeginRenderingToTexturesInternal(Impl, Colors, NumColors, Depth);
     Impl->InRendering = true;
 }

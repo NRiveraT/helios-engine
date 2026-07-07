@@ -207,8 +207,7 @@ std::vector<ImportedMesh> ImportGltf(const std::filesystem::path& Path, TextureC
     fastgltf::Parser Parser;
     auto Asset = Parser.loadGltf(DataBuffer.get(), Path.parent_path(), Options);
     if (Asset.error() != fastgltf::Error::None) {
-        HELIO_LOG_WARN("Resource", "ImportGltf: parse failed for '{}' ({})",
-                       Path.string(), fastgltf::getErrorMessage(Asset.error()));
+        HELIO_LOG_WARN("Resource", "ImportGltf: parse failed for '{}' ({})", Path.string(), fastgltf::getErrorMessage(Asset.error()));
         return Out;
     }
 

@@ -80,20 +80,6 @@ namespace helio::gameplay
         StaticMeshActor* Sponza = World.SpawnActorNamed<StaticMeshActor>("Sponza");
         Sponza->SetSections(MeshSystem().LoadModel("Assets/Sponza/Sponza.glb"));
 
-
-        //  // Imported mesh demo: load a glTF crate (deployed next to the binary)
-        // // and spawn an actor per primitive. Silently skipped if the asset is
-        // // missing, so the demo still runs without it.
-        // for (const resource::Mesh& CrateMesh : MeshSystem().LoadMeshes("Assets/Sponza.gltf"))
-        // {
-        //     // Sits on the ground plane (y = -1 + half-height 0.75), off to the
-        //     // left where it's clearly visible next to the primitives.
-        //     StaticMeshActor* Crate = World.SpawnActorNamed<StaticMeshActor>("Crate", CrateMesh);
-        //     Crate->SetLocalPosition(float3(-4.0f, -0.25f, 0.0f));
-        //     Crate->GetMaterial().AlbedoTint = float3(0.8f, 0.55f, 0.2f);
-        //     Crate->GetMaterial().Roughness = 0.85f;
-        // }
-
         scene::Camera* Camera = World.SpawnActorNamed<scene::Camera>("Camera", m_Window.Width(), m_Window.Height());
         if (ModelBounds.IsValid())
         {

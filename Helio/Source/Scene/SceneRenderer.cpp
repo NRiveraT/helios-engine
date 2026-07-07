@@ -56,6 +56,17 @@ namespace helio::scene
             .DebugName = "SunShadowMap"
         });
 
+        m_PostProcessColor = m_RHI->CreateTexture({
+            .Width = static_cast<uint32_t>(Width),
+            .Height = static_cast<uint32_t>(Height),
+            .Fmt = rhi::Format::RGBA8_SRGB,
+            .Usage =
+            rhi::TextureUsage::ColorAttachment | // we render into it
+            rhi::TextureUsage::Sampled | // (future effects may read it)
+            rhi::TextureUsage::TransferSrc, // Present blits it → needs this
+            .DebugName = "PostProcessColor"
+        });
+
         // AO
         m_AO = m_RHI->CreateTexture({
             .Width = static_cast<uint32_t>(Width),
@@ -77,7 +88,7 @@ namespace helio::scene
 
         // Depth Prepass
         m_DepthPrepassPipeline = m_RHI->CreateGraphicsPipeline({
-            .ShaderPath = "Shaders/Passes/DepthPrepass.slang",
+            .ShaderPath = "Shaders/Passes/DepthPrepass.spv",
             .ColorAttachmentCount = 0,
             .DepthFormat = rhi::Format::D32_SFLOAT,
             .Cull = rhi::CullMode::Back,
@@ -86,6 +97,28 @@ namespace helio::scene
             .DepthWrite = true,
             .DepthCompare = rhi::CompareOp::Greater,
             .DebugName = "Depth Prepass"
+        });
+
+        m_PostProcessPipeline = m_RHI->CreateGraphicsPipeline({
+            .ShaderPath = "Shaders/Passes/PostProcess.spv",
+            .ColorFormats = {rhi::Format::RGBA8_SRGB},
+            .ColorAttachmentCount = 1,
+            .DepthFormat = rhi::Format::Undefined,
+            .Cull = rhi::CullMode::None,
+            .DepthTest = false,
+            .DepthWrite = false,
+            .DebugName = "PostProcessing"
+        });
+
+        m_DebugViewModePipeline = m_RHI->CreateGraphicsPipeline({
+            .ShaderPath = "Shaders/Debug/DebugViewMode.spv",
+            .ColorFormats = {rhi::Format::RGBA8_SRGB},
+            .ColorAttachmentCount = 1,
+            .DepthFormat = rhi::Format::Undefined,
+            .Cull = rhi::CullMode::None,
+            .DepthTest = false,
+            .DepthWrite = false,
+            .DebugName = "Debug View Mode Pipeline"
         });
 
         // Same clip-space conventions as the main pass: reverse-Z ortho with
@@ -121,10 +154,16 @@ namespace helio::scene
             helio::debug::SetInstance(nullptr);
         }
         m_RHI->DestroyTexture(m_ColorTexture);
+        m_RHI->DestroyTexture(m_NormalTexture);
         m_RHI->DestroyTexture(m_DepthTexture);
+        m_RHI->DestroyTexture(m_AO);
+        m_RHI->DestroyTexture(m_PostProcessColor);
         m_RHI->DestroyTexture(m_ShadowMapTexture);
+        m_RHI->DestroyPipeline(m_DepthPrepassPipeline);
+        m_RHI->DestroyPipeline(m_PostProcessPipeline);
         m_RHI->DestroyPipeline(m_MeshPipeline);
         m_RHI->DestroyPipeline(m_ShadowMapPipeline);
+        m_RHI->DestroyPipeline(m_DebugViewModePipeline);
     }
 
     void SceneRenderer::WaitIdle() const
@@ -336,9 +375,13 @@ namespace helio::scene
         const bool HasScene = !m_Draws.empty() && m_Camera != nullptr;
 
         {
+            resource::DepthPrepassPushConsts DepthPC{};
+            DepthPC.FrameSlot = FrameSlot;
+            DepthPC.InstanceBufferSlot = m_InstanceBatch.Buffer().BindlessSlot;
+
             Rg.Graphics("Depth Prepass")
               .Depth(m_DepthTexture, 0.0f)
-              .Execute([this, FrameSlot](rhi::CommandList& C)
+              .Execute([this, DepthPC, HasScene](rhi::CommandList& C) mutable
               {
                   if (!HasScene)
                   {
@@ -350,11 +393,11 @@ namespace helio::scene
 
                   for (const auto& D : m_Draws)
                   {
-                      // ShadowPC.VertexBufferSlot = D.Mesh.VertexBuffer.BindlessSlot;
-                      // ShadowPC.InstanceBase = D.FirstInstance;
-                      // C.Push(ShadowPC);
-                      // C.BindIndexBuffer(D.Mesh.IndexBuffer, resource::IndexTypeFor(D.Mesh));
-                      // C.DrawIndexed(D.Mesh.IndexCount, D.InstanceCount);
+                      DepthPC.VertexBufferSlot = D.Mesh.VertexBuffer.BindlessSlot;
+                      DepthPC.InstanceBase = D.FirstInstance;
+                      C.Push(DepthPC);
+                      C.BindIndexBuffer(D.Mesh.IndexBuffer, resource::IndexTypeFor(D.Mesh));
+                      C.DrawIndexed(D.Mesh.IndexCount, D.InstanceCount);
                   }
               });
         }
@@ -370,7 +413,7 @@ namespace helio::scene
             auto Pass = Rg.Graphics("Static Meshes")
                           .Color(m_ColorTexture, 0.1274f, 0.3005f, 0.8469f, 1.f)
                           .Color(m_NormalTexture)
-                          .Depth(m_DepthTexture, 0.0f);
+                          .DepthLoad(m_DepthTexture);
             if (Shadow.Enabled && HasScene)
             {
                 Pass.Read(m_ShadowMapTexture); // depth -> SHADER_READ_ONLY before sampling
@@ -414,11 +457,64 @@ namespace helio::scene
             });
         }
 
+        {
+            Rg.Graphics("Post-process")
+              .Read(m_ColorTexture)
+              .Color(m_PostProcessColor, 0.0f, 0.0f, 0.0f, 1.f)
+              .Execute([this](rhi::CommandList& C)
+              {
+                  HELIO_PROFILE_ZONE("PostProcess")
+                  C.Bind(m_PostProcessPipeline);
+                  C.SetViewport(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
+
+                  resource::PostProcessPushConstants PC{};
+                  PC.SourceSlot = m_ColorTexture.SampledSlot;
+                  C.Push(PC);
+                  C.Draw(3);
+              });
+        }
+
+        {
+            if (m_DebugViewMode != 0)
+            {
+                rhi::TextureHandle DebugTexture;
+                switch (m_DebugViewMode)
+                {
+                case 1: DebugTexture = m_DepthTexture;
+                    break;
+                case 2: DebugTexture = m_NormalTexture;
+                    break;
+                default: break;
+                }
+
+                if (DebugTexture.IsValid())
+                {
+                    Rg.Graphics("Debug View Mode")
+                      .Read(DebugTexture)
+                      .Color(m_PostProcessColor)
+                      .Execute([this, DebugTexture](rhi::CommandList& C) mutable
+                      {
+                          HELIO_PROFILE_ZONE("DebugView")
+                          C.Bind(m_DebugViewModePipeline);
+                          C.SetViewport(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
+
+                          resource::DebugViewPushConst pc{};
+                          pc.Mode = m_DebugViewMode;
+                          pc.NearZ = m_Camera ? m_Camera->GetNearZ() : 0.01f;
+                          pc.DebugFar = 100.f;
+                          pc.SourceSlot = DebugTexture.SampledSlot;
+                          C.Push(pc);
+
+                          C.Draw(3);
+                      });
+                }
+            }
+        }
+
         // ---- Debug lines + stats overlay ----------------------------------------
         if (m_Camera != nullptr)
         {
-            m_DebugDraw.Render(Rg, m_ColorTexture, m_Camera->GetViewProjection(),
-                               m_Width, m_Height);
+            m_DebugDraw.Render(Rg, m_PostProcessColor, m_Camera->GetViewProjection(), m_Width, m_Height);
         }
 
         // Stats show the PREVIOUS frame's fully-measured CPU cost (m_LastCpuMs,
@@ -426,16 +522,16 @@ namespace helio::scene
         // so the dominant cost — command recording in Rg.Execute() below — has
         // not run yet this frame; measuring here would badly under-report it.
         m_Overlay.DrawStats(m_LastCpuMs, m_RHI->LastFrameGpuMs(), Rg.Passes());
-        m_Overlay.Render(Rg, m_ColorTexture, m_Width, m_Height);
+        m_Overlay.Render(Rg, m_PostProcessColor, m_Width, m_Height);
 
         // ---- Editor / UI hook -----------------------------------------------------
-        if (m_OverlayHook)
+        if
+        (m_OverlayHook)
         {
-            m_OverlayHook(Rg, m_ColorTexture,
-                          static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
+            m_OverlayHook(Rg, m_PostProcessColor, static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
         }
 
-        Rg.Present(m_ColorTexture);
+        Rg.Present(m_PostProcessColor);
         Rg.Execute(); // all pass lambdas + barriers + blit record here
 
         m_RHI->EndFrame();
@@ -467,6 +563,7 @@ namespace helio::scene
         m_RHI->DestroyTexture(m_NormalTexture);
         m_RHI->DestroyTexture(m_DepthTexture);
         m_RHI->DestroyTexture(m_AO);
+        m_RHI->DestroyTexture(m_PostProcessColor);
 
         m_ColorTexture = m_RHI->CreateTexture({
             .Width = static_cast<uint32_t>(Width),
@@ -498,6 +595,14 @@ namespace helio::scene
             .Fmt = rhi::Format::R8_UNORM,
             .Usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled,
             .DebugName = "SceneAO"
+        });
+
+        m_PostProcessColor = m_RHI->CreateTexture({
+            .Width = static_cast<uint32_t>(Width),
+            .Height = static_cast<uint32_t>(Height),
+            .Fmt = rhi::Format::RGBA8_SRGB,
+            .Usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled,
+            .DebugName = "PostProcessColor"
         });
     }
 } // namespace helio::scene

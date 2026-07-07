@@ -63,6 +63,16 @@ namespace helio::render
         return *this;
     }
 
+    PassBuilder& PassBuilder::DepthLoad(TextureHandle h)
+    {
+        ResourceUse U{};
+        U.Handle = h;
+        U.Mode = Access::Depth;
+        U.ClearOnLoad = false;
+        m_graph->m_passes[m_pass].Uses.push_back(U);
+        return *this;
+    }
+    
     void PassBuilder::Execute(std::function<void(CommandList&)> Fn)
     {
         m_graph->m_passes[m_pass].Fn = std::move(Fn);
