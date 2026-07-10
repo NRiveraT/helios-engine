@@ -54,6 +54,8 @@ struct PC {
     uint MetalRoughTex;
     uint EmissiveTex;
     uint OcclusionTex;
+    
+    uint AOSamplerSlot;
 };
 [[vk::push_constant]]
 PC pc;
@@ -134,6 +136,8 @@ PSOut PSMain(VSOut In) : SV_Target {
     FrameConstants Frame = LoadFrameConstants(pc.FrameSlot);
     SamplerState Samp = GetSampler(kSamplerLinearWrap);
     float2 UV = In.UV;
+    
+    float2 ScreenUV = In.Position.xy / Frame.ViewportAO.xy;
 
     // ---- Material: factor × texture (uniform branch per draw) ----------------
     float3 Albedo = pc.Albedo;
@@ -196,7 +200,10 @@ PSOut PSMain(VSOut In) : SV_Target {
 
     float3 Radiance = Frame.LightColorAmbient.rgb * Frame.LightDirWS.w;
     float3 Direct = (Diffuse + Specular) * Radiance * NdotL * Shadow;
-    float3 Ambient = Frame.LightColorAmbient.w * Albedo * Frame.LightColorAmbient.rgb * AO;
+    
+    float ao = GetTexture2D(pc.AOSamplerSlot).Sample(GetSampler(kSamplerPointClamp), ScreenUV).r;
+    
+    float3 Ambient = Frame.LightColorAmbient.w * Albedo * Frame.LightColorAmbient.rgb * (AO * ao);
 
 	PSOut o;
 	o.Color = float4(Direct + Ambient + Emissive, 1.0);

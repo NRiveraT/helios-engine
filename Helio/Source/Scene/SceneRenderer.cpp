@@ -89,7 +89,8 @@ namespace helio::scene
         // Depth Prepass
         m_DepthPrepassPipeline = m_RHI->CreateGraphicsPipeline({
             .ShaderPath = "Shaders/Passes/DepthPrepass.spv",
-            .ColorAttachmentCount = 0,
+            .ColorFormats = {rhi::Format::RGBA16F},
+            .ColorAttachmentCount = 1,
             .DepthFormat = rhi::Format::D32_SFLOAT,
             .Cull = rhi::CullMode::Back,
             .Front = rhi::FrontFace::Clockwise,
@@ -97,6 +98,18 @@ namespace helio::scene
             .DepthWrite = true,
             .DepthCompare = rhi::CompareOp::Greater,
             .DebugName = "Depth Prepass"
+        });
+
+        // AO
+        m_AmbientOcclusionPipeline = m_RHI->CreateGraphicsPipeline({
+            .ShaderPath = "Shaders/Passes/AmbientOcclusion.spv",
+            .ColorFormats = {rhi::Format::R8_UNORM},
+            .ColorAttachmentCount = 1,
+            .DepthFormat = rhi::Format::Undefined,
+            .Cull = rhi::CullMode::None,
+            .DepthTest = false,
+            .DepthWrite = false,
+            .DebugName = "Ambient Occlusion"
         });
 
         m_PostProcessPipeline = m_RHI->CreateGraphicsPipeline({
@@ -308,6 +321,11 @@ namespace helio::scene
         if (m_Camera != nullptr)
         {
             FC.ViewProj = m_Camera->GetViewProjection();
+            const float4x4 Proj = m_Camera->GetProjection();
+            const float4x4 InvProj = hlslpp::inverse(Proj);
+
+            FC.Proj = Proj;
+            FC.InvProj = InvProj;
             FC.CameraPosWS = float4(m_Camera->GetWorldPosition(), 0.0f);
         }
         else
@@ -336,14 +354,7 @@ namespace helio::scene
             Shadow.Enabled ? 1.0f : 0.0f);
         FC.ShadowMapSlot = m_ShadowMapTexture.SampledSlot;
 
-        const float4x4 Proj = m_Camera->GetProjection();
-        const float4x4 InvProj = hlslpp::inverse(Proj);
-
-        FC.Proj = Proj;
-        FC.InvProj = InvProj;
-        FC.ViewportAO = float4(
-            static_cast<float>(m_Width), static_cast<float>(m_Height),
-            hlslpp::asfloat(m_AO.SampledSlot), 1.f);
+        FC.ViewportAO = float4(static_cast<float>(m_Width), static_cast<float>(m_Height), hlslpp::asfloat(m_AO.SampledSlot), 1.f);
 
         m_FrameConstantsRing.Write(0, &FC, sizeof(FC));
         const uint32_t FrameSlot = m_FrameConstantsRing.Current().BindlessSlot;
@@ -381,6 +392,7 @@ namespace helio::scene
 
             Rg.Graphics("Depth Prepass")
               .Depth(m_DepthTexture, 0.0f)
+              .Color(m_NormalTexture, 0.0f, 0.0f, 0.0f, 1.f)
               .Execute([this, DepthPC, HasScene](rhi::CommandList& C) mutable
               {
                   if (!HasScene)
@@ -390,7 +402,6 @@ namespace helio::scene
 
                   C.Bind(m_DepthPrepassPipeline);
                   C.SetViewport(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
-
                   for (const auto& D : m_Draws)
                   {
                       DepthPC.VertexBufferSlot = D.Mesh.VertexBuffer.BindlessSlot;
@@ -401,7 +412,41 @@ namespace helio::scene
                   }
               });
         }
+
         // AO
+        {
+            Rg.Graphics("Ambient Occlusion")
+              .Read(m_NormalTexture)
+              .Read(m_DepthTexture)
+              .Color(m_AO, 0.0f, 0.0f, 0.0f, 1.f)
+              .Execute([this, FrameSlot, HasScene](rhi::CommandList& C)
+              {
+                  if (!HasScene)
+                  {
+                      return; // clear-only frame
+                  }
+
+                  HELIO_PROFILE_ZONE("AO")
+                  struct AOPushConsts
+                  {
+                      uint32_t FrameSlot;
+                      uint32_t NormalSamplerSlot;
+                      uint32_t DepthSlot;
+                      float4x4 View;
+                  } pc;
+
+                  pc.FrameSlot = FrameSlot;
+                  pc.NormalSamplerSlot = m_NormalTexture.SampledSlot;
+                  pc.DepthSlot = m_DepthTexture.SampledSlot;
+                  pc.View = hlslpp::transpose(m_Camera->GetView());
+
+                  C.Bind(m_AmbientOcclusionPipeline);
+                  C.SetViewport(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
+                  C.Push(pc);
+
+                  C.Draw(3);
+              });
+        }
 
         // ---- Main opaque pass ------------------------------------------------
         // Declared EVERY frame so the color + depth targets are always cleared
@@ -413,6 +458,7 @@ namespace helio::scene
             auto Pass = Rg.Graphics("Static Meshes")
                           .Color(m_ColorTexture, 0.1274f, 0.3005f, 0.8469f, 1.f)
                           .Color(m_NormalTexture)
+                          .Read(m_AO)
                           .DepthLoad(m_DepthTexture);
             if (Shadow.Enabled && HasScene)
             {
@@ -434,7 +480,8 @@ namespace helio::scene
                 resource::MeshInstancedPushConsts PC{};
                 PC.FrameSlot = FrameSlot;
                 PC.InstanceBufferSlot = m_InstanceBatch.Buffer().BindlessSlot;
-
+                PC.AOSamplerSlot = m_AO.SampledSlot;
+                
                 for (const auto& D : m_Draws)
                 {
                     HELIO_PROFILE_ZONE("DrawMesh")
@@ -475,15 +522,20 @@ namespace helio::scene
         }
 
         {
-            if (m_DebugViewMode != 0)
+            if (m_DebugViewMode != DebugViewMode::Lit)
             {
                 rhi::TextureHandle DebugTexture;
                 switch (m_DebugViewMode)
                 {
-                case 1: DebugTexture = m_DepthTexture;
+                case DebugViewMode::Depth: DebugTexture = m_DepthTexture;
                     break;
-                case 2: DebugTexture = m_NormalTexture;
+                case DebugViewMode::WorldNormals: DebugTexture = m_NormalTexture;
                     break;
+                case DebugViewMode::WorldPosition: DebugTexture = m_DepthTexture;
+                    break;
+                case DebugViewMode::AmbientOcclusion: DebugTexture = m_AO;
+                    break;
+
                 default: break;
                 }
 
@@ -492,17 +544,18 @@ namespace helio::scene
                     Rg.Graphics("Debug View Mode")
                       .Read(DebugTexture)
                       .Color(m_PostProcessColor)
-                      .Execute([this, DebugTexture](rhi::CommandList& C) mutable
+                      .Execute([this, DebugTexture, FrameSlot](rhi::CommandList& C) mutable
                       {
                           HELIO_PROFILE_ZONE("DebugView")
                           C.Bind(m_DebugViewModePipeline);
                           C.SetViewport(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
 
                           resource::DebugViewPushConst pc{};
-                          pc.Mode = m_DebugViewMode;
+                          pc.Mode = static_cast<uint32_t>(m_DebugViewMode);
                           pc.NearZ = m_Camera ? m_Camera->GetNearZ() : 0.01f;
                           pc.DebugFar = 100.f;
                           pc.SourceSlot = DebugTexture.SampledSlot;
+                          pc.FrameSlot = FrameSlot;
                           C.Push(pc);
 
                           C.Draw(3);
@@ -601,7 +654,7 @@ namespace helio::scene
             .Width = static_cast<uint32_t>(Width),
             .Height = static_cast<uint32_t>(Height),
             .Fmt = rhi::Format::RGBA8_SRGB,
-            .Usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled,
+            .Usage = rhi::TextureUsage::ColorAttachment | rhi::TextureUsage::Sampled | rhi::TextureUsage::TransferSrc,
             .DebugName = "PostProcessColor"
         });
     }

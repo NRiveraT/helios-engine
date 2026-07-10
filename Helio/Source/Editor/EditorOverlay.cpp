@@ -464,18 +464,20 @@ namespace helio::editor
         }
         ImGui::Separator();
 
-        const char* DebugViewMode[3] = {"Lit", "Depth", "WorldNormal"};
+        uint32_t DebugEnumSize = static_cast<uint32_t>(scene::DebugViewMode::Count);
+        scene::DebugViewMode DebugViewID = m_SceneRenderer->GetDebugViewMode();
 
-        if (ImGui::BeginCombo("Debug View Mode", DebugViewMode[m_SceneRenderer->GetDebugViewMode()]))
+        if (ImGui::BeginCombo("Debug View Mode", scene::DebugViewModeToString(DebugViewID)))
         {
-            for (int n = 0, n_end = IM_ARRAYSIZE(DebugViewMode); n < n_end; n++)
+            for (uint32_t n = 0; n < DebugEnumSize - 1; n++)
             {
-                const bool is_selected = (m_SceneRenderer->GetDebugViewMode() == n);
-                if (ImGui::Selectable(DebugViewMode[n], is_selected))
+                const bool is_selected = (DebugViewID == static_cast<scene::DebugViewMode>(n));
+                if (ImGui::Selectable(scene::DebugViewModeToString(static_cast<scene::DebugViewMode>(n)), is_selected))
                 {
-                    m_SceneRenderer->SetDebugViewMode(n);
+                    m_SceneRenderer->SetDebugViewMode(static_cast<scene::DebugViewMode>(n));
+                    HELIO_LOG_INFO("DEBUG VIEW", "Debug view mode: {} - ID {}", scene::DebugViewModeToString(static_cast<scene::DebugViewMode>(n)), static_cast<int>(n));
                 }
-                
+
                 if (is_selected)
                 {
                     ImGui::SetItemDefaultFocus();

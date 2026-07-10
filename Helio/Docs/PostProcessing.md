@@ -20,8 +20,8 @@ Each milestone is a rung: runnable, visible, and built on the one before.
 - **M1 — Chaining effects.** A second effect (vignette) after the first, introducing ping-pong between two targets — the pattern for stacking N effects. *(optional — skipped for now; ping-pong reappears at SSAO→blur)*
 
 ### Part B — the geometry substrate (what SSAO/SSR need)
-- **M2 — See your depth (reverse-Z).** Camera depth is already produced; make it *visible* with a reusable debug-view pass and learn the reverse-Z linearization M3 is built on. *You are here.*
-- **M3 — Reconstruction library.** `Shaders/Common/ScreenSpace.slang`: turn a depth sample back into a 3D view-space position. Visualize it. This is where reverse-Z and column-vector math get taught properly.
+- **M2 — See your depth (reverse-Z).** Camera depth is already produced; make it *visible* with a reusable debug-view pass and learn the reverse-Z linearization M3 is built on. *(done)*
+- **M3 — Reconstruct view-space position from depth.** Un-project depth back into the surface's 3D point (inline in the debug pass for now; it lifts into a shared `Shaders/Common/ScreenSpace.slang` when SSAO becomes its second consumer). Where reverse-Z + column-vector + the perspective divide get taught. *You are here.*
 - **M4 — Geometry normal buffer.** A shared normal target that AO *and* SSR *and* future deferred work read. Visualize it.
 
 ### Part C — SSAO (first geometry-aware effect)
@@ -509,4 +509,436 @@ Leaks won't crash you, but "free what you create" is the habit — and the day y
 - **Data textures point-sample, never linear.** Depth, normals, AO — read the exact texel; averaging them invents wrong values.
 - **A debug view is just a post-process pass with a mode.** You now have a reusable inspector, and adding a buffer to inspect is one more `if (pc.Mode == N)`.
 
-**Next — Milestone 3:** turn that linearized depth into a full 3D **view-space position** (not just distance — the actual x, y, z of the surface under each pixel), and add it as debug mode 2. That's the final piece of "the screen understands its own geometry" before we can start measuring occlusion for SSAO.
+---
+
+# Milestone 3 — Reconstruct a view-space position from depth
+
+**Goal.** In M2 you recovered how *far* a surface is (`z_view = NearZ / depth`). Now recover *where* it is — the full 3D point **(x, y, z) in view space**, the surface's position relative to the camera. You'll add it as a new debug mode and paint it as a grid to confirm it's correct.
+
+**Why this is the milestone that unlocks SSAO.** Ambient occlusion asks, for each pixel, "how much nearby geometry surrounds this point?" To answer that you scatter sample points in a little sphere *around the surface point* and check whether each is buried. You cannot do that with distance alone — you need the actual point. Reconstruction is the operation that turns a flat depth buffer back into 3D positions, and every geometry-aware effect (SSAO, SSR, DOF) begins with it.
+
+---
+
+## 3.1 — The idea: undo the projection
+
+Remember how a point gets to the screen (the mesh vertex shader does this):
+
+```
+view-space point  --(Proj)-->  clip space  --(÷w)-->  NDC  -->  the pixel + its depth
+```
+
+Reconstruction runs that backwards:
+
+```
+the pixel's UV + depth  -->  NDC  --(InvProj)-->  clip space  --(÷w)-->  view-space point
+```
+
+`InvProj` is just the inverse of the projection matrix — you already compute it on the CPU (`hlslpp::inverse(Proj)`) and upload it in `FrameConstants`. Two subtleties make or break this, and both are Helio conventions you've met:
+
+1. **Screen UV → NDC.** The fullscreen pass gives you `In.UV` in `[0,1]`. NDC is `[-1,1]`, so `ndc.xy = In.UV * 2 - 1`. Because Helio bakes the Y-flip into the projection, this maps straight through on *both* axes — no manual flip. `ndc.z` is the stored reverse-Z depth as-is.
+2. **The perspective divide.** `mul(InvProj, float4(ndc, 1))` gives a *homogeneous* result — a `float4` whose `w` is not 1. You must **divide xyz by w** to get the real 3D point. Skipping the divide is the single most common reconstruction bug; the result looks almost right up close and wildly wrong at distance.
+
+---
+
+## 3.2 — Give the debug shader access to `FrameConstants`
+
+Mode 1 only needed two loose numbers (`NearZ`, `DebugFar`) passed in the push constant. Mode 3 needs the whole `InvProj` matrix — and matrices don't go in push constants, they live in `FrameConstants`. So the debug pass needs the **frame slot**, the same way every 3D pass gets it, to call `LoadFrameConstants`.
+
+Add one field to the push constant. In [`MeshPipeline.h`](../Source/Resource/MeshPipeline.h):
+
+```cpp
+struct DebugViewPushConst
+{
+    uint32_t Mode;
+    uint32_t SourceSlot;
+    float    NearZ;
+    float    DebugFar;
+    uint32_t FrameSlot;   // NEW — bindless slot of this frame's FrameConstants
+};
+static_assert(sizeof(DebugViewPushConst) == 20, "must match the PC block in Shaders/Debug/DebugViewMode.slang");
+```
+
+Mirror it in the shader's `DebugPushConst`, and `import Frame;` at the top so you can call `LoadFrameConstants`:
+
+```hlsl
+import Fullscreen;
+import Bindless;
+import Frame;        // NEW — FrameConstants + LoadFrameConstants
+
+struct DebugPushConst {
+  uint  Mode;
+  uint  SourceSlot;
+  float NearZ;
+  float DebugFar;
+  uint  FrameSlot;   // NEW
+};
+```
+
+---
+
+## 3.3 — The new shader mode
+
+Add mode 3 to `PSMain` in [`DebugViewMode.slang`](../Shaders/Debug/DebugViewMode.slang):
+
+```hlsl
+if (pc.Mode == 3) {
+    FrameConstants F = LoadFrameConstants(pc.FrameSlot);
+
+    float d = GetTexture2D(pc.SourceSlot).Sample(GetSampler(kSamplerPointClamp), In.UV).r;
+    if (d <= 0.0) return float4(0, 0, 0, 1);     // background: no surface here
+
+    // Screen UV [0,1] -> clip-space NDC [-1,1]. Y-flip is baked into the
+    // projection, so v maps straight through: uv*2-1 on BOTH axes. ndc.z is
+    // the reverse-Z depth as stored.
+    float3 ndc = float3(In.UV * 2.0 - 1.0, d);
+
+    // Undo the projection (clip -> view), then the perspective divide by w
+    // turns the homogeneous result back into a real 3D point.
+    float4 vh = mul(F.InvProj, float4(ndc, 1.0));   // column-vector: matrix on the LEFT
+    float3 viewPos = vh.xyz / vh.w;                  // <-- the divide you must not forget
+
+    // Visualize as a 1-unit grid via frac(): correct reconstruction shows a
+    // grid that's continuous across each surface and breaks cleanly at edges.
+    return float4(frac(viewPos), 1.0);
+}
+```
+
+The `SourceSlot` for this mode is the **depth** texture (you reconstruct *from* depth) — same source as mode 1.
+
+---
+
+## 3.4 — Wire it up (C++)
+
+**Pass the frame slot.** The debug pass lambda in `Render()` currently captures `[this, DebugTexture]`; add `FrameSlot` (the local you already computed for the other passes) and set it:
+
+```cpp
+Rg.Graphics("Debug View Mode")
+  .Read(DebugTexture)
+  .Color(m_PostProcessColor)
+  .Execute([this, DebugTexture, FrameSlot](rhi::CommandList& C) mutable
+  {
+      C.Bind(m_DebugViewModePipeline);
+      C.SetViewport(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
+
+      resource::DebugViewPushConst pc{};
+      pc.Mode      = m_DebugViewMode;
+      pc.NearZ     = m_Camera ? m_Camera->GetNearZ() : 0.01f;
+      pc.DebugFar  = 100.f;
+      pc.SourceSlot = DebugTexture.SampledSlot;
+      pc.FrameSlot = FrameSlot;                 // NEW
+      C.Push(pc);
+      C.Draw(3);
+  });
+```
+
+**Route mode 3 to the depth texture.** In the `switch (m_DebugViewMode)` that picks `DebugTexture`:
+
+```cpp
+case 1: DebugTexture = m_DepthTexture;  break;   // linear depth
+case 2: DebugTexture = m_NormalTexture; break;   // world normal
+case 3: DebugTexture = m_DepthTexture;  break;   // NEW — view position (reconstructed from depth)
+```
+
+**Extend the ImGui combo** so the label array covers the new mode (otherwise `DebugViewMode[3]` reads out of bounds). In [`EditorOverlay.cpp`](../Source/Editor/EditorOverlay.cpp):
+
+```cpp
+const char* DebugViewMode[4] = { "Lit", "Depth", "WorldNormal", "ViewPosition" };
+```
+
+`IM_ARRAYSIZE` picks up the fourth entry automatically — no other combo change needed.
+
+---
+
+## 3.5 — Run and verify
+
+Pick **ViewPosition** in the debug combo. You should see a **coloured grid painted onto the scene** — a repeating 1-unit lattice that flows smoothly across each surface and snaps at silhouette edges. That coherence is the proof: every pixel independently reconstructed a position, and neighbours agree, so the grid lines up.
+
+Two things that are *expected*, not bugs:
+- The grid **swims as you move the camera.** View space is measured *from the camera*, so the positions shift with it. (M4+ effects that need world-locked behaviour are why some engines also keep a world-position path — we don't need it for SSAO.)
+- Near the camera the grid cells look large; far away they pack tight. That's correct perspective.
+
+**The built-in correctness test:** the `z` component of your reconstructed `viewPos` must equal mode 1's `NearZ / d`. If you temporarily output `float4(frac(viewPos.zzz), 1.0)`, it should match the Depth view's structure. If it doesn't, your `InvProj` is transposed or being read at the wrong offset.
+
+If it's wrong:
+- ☐ **Everything's a flat colour / garbage** → you skipped the `÷ vh.w` divide, or `FrameSlot` isn't reaching the shader.
+- ☐ **Looks mirrored or sheared** → `mul()` argument order (must be `mul(F.InvProj, v)`, matrix left), or `InvProj` read at the wrong byte offset in `Frame.slang`.
+- ☐ **Grid is right up close but explodes at distance** → the classic missing perspective divide.
+
+---
+
+## 3.6 — What you learned, and why it matters
+
+- **Reconstruction = un-projection + perspective divide.** `viewPos = (InvProj · [ndc, 1]) / w`. This is the exact code SSAO will run per pixel, and per hemisphere sample.
+- **Fullscreen passes read `FrameConstants` too** — via a `FrameSlot` in the push constant, same as the 3D passes. You'll lean on this constantly.
+- You now have depth (mode 1), normals (mode 2), and **position (mode 3)** — the screen fully "understands its own geometry."
+
+**Next — Milestone 4:** you already produce a world-normal buffer, but for occlusion math SSAO wants a *view-space* normal that's consistent with these view-space positions. M4 formalizes the normal you'll feed SSAO (and you can finally verify it against a normal reconstructed *from* the positions you just built).
+
+---
+
+# Milestone 4 & 5 — how we actually got here (the short version)
+
+We took a shortcut through M4/M5 that's worth recording so the jump to M6 makes sense.
+
+- **M4 (the normal buffer) — done via the depth pre-pass.** Instead of a dedicated normal pass, the depth pre-pass now writes the **geometric world normal** in the same draw that lays down depth ("in one swing"). The prepass VS transforms the interpolated vertex normal by the inverse-transpose (the cofactor matrix, identical to `MeshInstanced.slang`) and the PS outputs it to `m_NormalTexture` (`RGBA16F`, so raw signed `[-1,1]` — no `*0.5+0.5` encoding). Crucially it writes the **geometric** normal, *not* the normal-mapped one: SSAO wants the surface's macro facing, and micro normal-map detail the depth buffer can't confirm would only add noise. This is the normal SSAO consumes.
+- **M5 (no-op AO wire) — deferred on purpose.** The `m_AO` target and the "Ambient Occlusion" pass exist and run in the right slot (after the prepass, before the main pass). Lighting does **not** consume `m_AO` yet — we're wiring the consumption *after* the AO math is real, so we never debug an empty pipe and wrong math at the same time.
+
+So the pipeline order today is: **depth+normal prepass → AO pass → main opaque pass**. M6 fills in the AO pass.
+
+---
+
+# Milestone 6 — The SSAO algorithm
+
+**Goal.** Replace the placeholder AO shader with real screen-space ambient occlusion: for each pixel, ask *"how much nearby geometry surrounds this surface point?"* and write the answer (1 = open, 0 = fully buried) to `m_AO`.
+
+**The one-sentence idea.** Reconstruct the surface point in view space, scatter a handful of sample points in a hemisphere oriented along its normal, and count how many of those samples fall *behind* real geometry (as seen in the depth buffer). Many buried samples → a crevice → low AO.
+
+---
+
+## 6.0 — Prerequisites (three loose ends, fix these first)
+
+The math below is view-space and reads a view-space normal, so three things must be true before it works:
+
+1. **`InvProj` must be `inverse(Proj)`.** In `SceneRenderer.cpp` the frame-constants fill currently computes `hlslpp::inverse(m_Camera->GetViewProjection())` — that's `inverse(ViewProj)` (clip→**world**), mislabeled as `InvProj`. Reconstruction here needs clip→**view**. Change it to `hlslpp::inverse(Proj)`. (Without this, every reconstructed position is world-space and the camera-relative math silently breaks.)
+2. **Add `View` to `FrameConstants`.** The normal buffer is *world*-space; SSAO needs it in *view* space. Add a `float4x4 View` field (CPU struct + `Mat4Packed` upload of `m_Camera->GetView()` + the `LoadMat4ColumnStored` mirror in `Frame.slang`, and bump the `sizeof` static_assert by 64 bytes) — same pattern `Proj`/`InvProj` already follow. *(Alternative if you want zero new matrix: derive the view normal in-shader as `normalize(cross(ddx(P), ddy(P)))` from the reconstructed positions — faceted and edge-noisy, but no `View`. We use the buffer you built.)*
+3. **The AO pass must read depth.** It currently only `.Read(m_NormalTexture)`. Add `.Read(m_DepthTexture)` and pass its slot — you can't reconstruct position without depth bound.
+
+---
+
+## 6.1 — The inputs, per pixel
+
+Two reconstructions, both things you already know how to do:
+
+```
+depth  ──(InvProj, ÷w)──►  P   = view-space position   (Milestone 3)
+worldN ──(View 3×3)─────►  N   = view-space normal      (rotate the buffer normal)
+```
+
+```hlsl
+float3 P  = ReconstructViewPos(In.UV, d, F.InvProj);          // view-space point
+float3 Nw = normalize(SampleNormal(In.UV).xyz);               // world normal (raw, RGBA16F)
+float3 N  = normalize(mul((float3x3)F.View, Nw));             // → view space
+```
+
+`(float3x3)F.View` is the view matrix's upper-left 3×3 — a pure rotation (the view transform is rigid), so it rotates the normal correctly with no inverse-transpose needed. Point-sample the normal (never linear — averaging normals across an edge invents a facing that belongs to no surface).
+
+---
+
+## 6.2 — The sample kernel (hemisphere, clustered near the surface)
+
+We test occlusion by placing sample points in the **hemisphere above the surface** — the half-space the normal points into, where an occluder would have to sit to darken this pixel. Two properties matter:
+
+- **Oriented along `N`.** A sphere kernel would put half its samples *inside* the surface (always "occluded"), washing everything grey. The hemisphere spends every sample on the open side.
+- **Clustered near the origin.** Nearby geometry occludes far more than distant geometry, so we pack more samples close to `P`. We scale each sample's length by an accelerating curve, `lerp(0.1, 1.0, (i/K)²)`.
+
+We generate the `K` directions in-shader from the **Hammersley** low-discrepancy sequence — deterministic, evenly spread, and needs no uploaded kernel buffer:
+
+```hlsl
+float2 xi = Hammersley(i, K);                   // evenly-distributed 2D in [0,1]
+float  z  = xi.x;                               // height up the hemisphere [0,1]
+float  r  = sqrt(1.0 - z * z);
+float  ph = 2.0 * PI * xi.y;
+float3 k  = float3(r*cos(ph), r*sin(ph), z);    // tangent space: +z is the normal
+k *= lerp(0.1, 1.0, float(i*i) / float(K*K));   // pack near the surface
+```
+
+---
+
+## 6.3 — Rotating the kernel per pixel (kill the banding)
+
+The same `K` directions on every pixel produce visible repeating bands. We rotate the whole kernel by a **per-pixel random angle** so the pattern becomes high-frequency noise instead — noise a cheap blur (M7) then dissolves. We use **interleaved gradient noise** (Jimenez) rather than a noise *texture*, so there's nothing extra to allocate:
+
+```hlsl
+float  ang = IGN(In.UV * F.ViewportAO.xy) * 2.0 * PI;   // ViewportAO.xy = (W,H)
+float3 rnd = float3(cos(ang), sin(ang), 0.0);           // random vector in the tangent plane
+float3 T   = normalize(rnd - N * dot(rnd, N));          // Gram-Schmidt against N
+float3 B   = cross(N, T);                                // T,B,N is now an orthonormal basis
+```
+
+`T,B,N` maps a tangent-space kernel direction into view space. We apply it **explicitly** — `T*k.x + B*k.y + N*k.z` — to sidestep the classic HLSL `float3x3(T,B,N)` row-vs-column ambiguity.
+
+---
+
+## 6.4 — The occlusion test (mind Helio's reverse-Z + +Z-forward)
+
+For each sample, move to the view-space sample point, project it back to the screen, read what surface *actually* lives at that pixel, and compare depths:
+
+```hlsl
+float3 samplePos = P + (T*k.x + B*k.y + N*k.z) * RADIUS;   // view-space sample
+
+float4 sc = mul(F.Proj, float4(samplePos, 1.0));           // view → clip (Proj on the LEFT)
+float2 su = (sc.xy / sc.w) * 0.5 + 0.5;                     // → screen UV (Y-flip is baked in)
+
+float  sd      = DepthAt(su);                              // stored reverse-Z at that pixel
+float3 stored  = ReconstructViewPos(su, sd, F.InvProj);    // its view-space position
+float  zStored = stored.z;                                 // ← the surface's view-space z
+```
+
+Now the comparison — **this is the one place Helio's conventions bite.** View space is **+Z-forward**, so a *larger* z means *farther* from the camera and a *smaller* z means *closer*. A sample is occluded when the real surface at its screen location is **closer to the camera than the sample point** — i.e. solid geometry sits between the camera and where our sample floats:
+
+```
+occluded  ⟺  zStored < samplePos.z − BIAS
+```
+
+- `BIAS` (a small view-space distance, ~0.025) subtracts a margin so a sample sitting *on* its own surface doesn't self-occlude from precision wobble.
+- A **range check** stops a distant background wall (glimpsed past a thin object) from over-darkening: only occluders within ~`RADIUS` of `P` count.
+
+```hlsl
+float rangeCheck = smoothstep(0.0, 1.0, RADIUS / abs(P.z - zStored));
+occlusion += (zStored < samplePos.z - BIAS ? 1.0 : 0.0) * rangeCheck;
+```
+
+> **If your AO comes out inverted** (crevices bright, flats dark), this comparison is the first suspect — flip it to `zStored > samplePos.z + BIAS` only if you've *confirmed* your view space is −Z-forward. Helio's is +Z-forward, so the form above is correct.
+
+---
+
+## 6.5 — From occlusion to AO
+
+Average over the kernel, invert (occlusion is the *dark* term), and raise to a power for contrast:
+
+```
+AO = ( 1 − occlusion / K ) ^ POWER
+```
+
+`POWER` (~1.5) deepens contact shadows without crushing mid-tones. Write `AO` to all three channels (so the debug view shows it as grey) — the lighting consumer only reads `.r`.
+
+---
+
+## 6.6 — The full shader
+
+`Shaders/Passes/AmbientOcclusion.slang` — replacing the red placeholder:
+
+```hlsl
+import Fullscreen;
+import Bindless;
+import Frame;
+
+static const uint  K      = 24;      // samples per pixel
+static const float RADIUS = 0.5;     // view-space units — tune to scene scale
+static const float BIAS   = 0.025;   // view-space units — self-occlusion margin
+static const float POWER  = 1.5;     // contrast
+static const float PI     = 3.14159265;
+
+struct AOPush { uint FrameSlot; uint DepthSlot; uint NormalSlot; };
+[[vk::push_constant]] AOPush pc;
+
+[shader("vertex")]
+FullscreenVSOut VSMain(uint id : SV_VertexID) { return FullscreenVS(id); }
+
+// van der Corput radical inverse → Hammersley low-discrepancy set (no uploaded kernel)
+float RadicalInverse(uint b) {
+    b = (b << 16) | (b >> 16);
+    b = ((b & 0x55555555u) << 1) | ((b & 0xAAAAAAAAu) >> 1);
+    b = ((b & 0x33333333u) << 2) | ((b & 0xCCCCCCCCu) >> 2);
+    b = ((b & 0x0F0F0F0Fu) << 4) | ((b & 0xF0F0F0F0u) >> 4);
+    b = ((b & 0x00FF00FFu) << 8) | ((b & 0xFF00FF00u) >> 8);
+    return float(b) * 2.3283064365386963e-10;              // ÷ 2^32
+}
+float2 Hammersley(uint i, uint n) { return float2(float(i) / n, RadicalInverse(i)); }
+
+// interleaved gradient noise → per-pixel rotation angle (no noise texture)
+float IGN(float2 p) { return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715)))); }
+
+float DepthAt(uint slot, float2 uv) {
+    return GetTexture2D(slot).SampleLevel(GetSampler(kSamplerPointClamp), uv, 0.0).r;
+}
+float3 ReconstructViewPos(float2 uv, float d, float4x4 invProj) {
+    float3 ndc = float3(uv * 2.0 - 1.0, d);
+    float4 vh  = mul(invProj, float4(ndc, 1.0));
+    return vh.xyz / vh.w;
+}
+
+[shader("fragment")]
+float4 PSMain(FullscreenVSOut In) : SV_Target {
+    FrameConstants F = LoadFrameConstants(pc.FrameSlot);
+
+    float d = DepthAt(pc.DepthSlot, In.UV);
+    if (d <= 0.0) return float4(1, 1, 1, 1);                        // sky: unoccluded
+
+    float3 P  = ReconstructViewPos(In.UV, d, F.InvProj);
+    float3 Nw = normalize(GetTexture2D(pc.NormalSlot)
+                          .SampleLevel(GetSampler(kSamplerPointClamp), In.UV, 0.0).xyz);
+    float3 N  = normalize(mul((float3x3)F.View, Nw));              // world → view
+
+    float  ang = IGN(In.UV * F.ViewportAO.xy) * 2.0 * PI;
+    float3 rnd = float3(cos(ang), sin(ang), 0.0);
+    float3 T   = normalize(rnd - N * dot(rnd, N));
+    float3 B   = cross(N, T);
+
+    float occlusion = 0.0;
+    for (uint i = 0; i < K; ++i) {
+        float2 xi = Hammersley(i, K);
+        float  z  = xi.x;
+        float  r  = sqrt(1.0 - z * z);
+        float  ph = 2.0 * PI * xi.y;
+        float3 k  = float3(r * cos(ph), r * sin(ph), z);
+        k *= lerp(0.1, 1.0, float(i * i) / float(K * K));
+
+        float3 samplePos = P + (T * k.x + B * k.y + N * k.z) * RADIUS;
+
+        float4 sc = mul(F.Proj, float4(samplePos, 1.0));
+        float2 su = (sc.xy / sc.w) * 0.5 + 0.5;
+        if (any(su < 0.0) || any(su > 1.0)) continue;              // off-screen: skip
+
+        float sd = DepthAt(pc.DepthSlot, su);
+        if (sd <= 0.0) continue;                                    // sampled the sky
+        float zStored = ReconstructViewPos(su, sd, F.InvProj).z;
+
+        float rangeCheck = smoothstep(0.0, 1.0, RADIUS / abs(P.z - zStored));
+        occlusion += (zStored < samplePos.z - BIAS ? 1.0 : 0.0) * rangeCheck;
+    }
+
+    float ao = pow(saturate(1.0 - occlusion / float(K)), POWER);
+    return float4(ao, ao, ao, 1.0);
+}
+```
+
+Note `SampleLevel(..., 0.0)`, not `Sample`: the depth taps land at a *computed* `su` inside a loop, where implicit derivatives are undefined — forcing LOD 0 is correct and avoids driver warnings.
+
+---
+
+## 6.7 — Wire it up (C++)
+
+The AO pass already exists; it needs depth bound and the fuller push constant:
+
+```cpp
+Rg.Graphics("Ambient Occlusion")
+  .Read(m_NormalTexture)
+  .Read(m_DepthTexture)                 // NEW — reconstruction needs depth
+  .Color(m_AO, 0.f, 0.f, 0.f, 1.f)
+  .Execute([this, FrameSlot](rhi::CommandList& C) {
+      HELIO_PROFILE_ZONE("AO")
+      struct AOPush { uint32_t FrameSlot; uint32_t DepthSlot; uint32_t NormalSlot; } pc;
+      pc.FrameSlot  = FrameSlot;
+      pc.DepthSlot  = m_DepthTexture.SampledSlot;   // NEW
+      pc.NormalSlot = m_NormalTexture.SampledSlot;
+      C.Bind(m_AmbientOcclusionPipeline);
+      C.SetViewport(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
+      C.Push(pc);
+      C.Draw(3);
+  });
+```
+
+Plus the two prerequisites from 6.0: the `InvProj = inverse(Proj)` fix and the `View` matrix addition to `FrameConstants`.
+
+---
+
+## 6.8 — See it before you consume it
+
+You haven't wired AO into lighting yet — so **route `m_AO` through the debug view** to inspect it in isolation. Add an `AmbientOcclusion` debug mode whose `DebugTexture = m_AO` and display `.r` as greyscale (it's already single-value, so no decode). Fly around: seams, contact points, and concave corners should darken; open floors and walls stay white. That's your ground truth before it ever touches ambient.
+
+If it's wrong:
+- ☐ **Uniform grey / no variation** → `RADIUS` far too small or too large for your scene; try 0.2–1.0. Or `View`/`InvProj` not reaching the shader (normals/positions garbage).
+- ☐ **Inverted (crevices bright)** → the occlusion comparison sign (6.4).
+- ☐ **Dark halos around every silhouette** → expected pre-blur to a degree; the range check tames it. If severe, raise `BIAS` slightly.
+- ☐ **Swimming/marching noise** → that's the per-pixel rotation doing its job; it's what the M7 blur removes.
+
+---
+
+## 6.9 — What you built, and what's next
+
+- **SSAO is view-space geometry sampling:** reconstruct `P` and `N`, orient a hemisphere kernel, and count samples that fall behind the depth buffer. Every input was something earlier milestones already built.
+- **Zero new resources:** the kernel is Hammersley-in-shader, the rotation is IGN-in-shader — no kernel buffer, no noise texture.
+- **The output is deliberately noisy.** The per-pixel rotation trades banding for high-frequency grain.
+
+**Next — Milestone 7 (blur):** a small edge-aware (depth-aware) blur over `m_AO` removes the grain without bleeding occlusion across silhouettes. **Then Milestone 8:** wire `m_AO` into the ambient term (sample it at the pixel's *screen* UV, multiply `Ambient` only — never direct light) and tune `RADIUS`/`POWER` to taste.

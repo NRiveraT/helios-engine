@@ -77,8 +77,8 @@ namespace helio::gameplay
             }
         }
 
-        StaticMeshActor* Sponza = World.SpawnActorNamed<StaticMeshActor>("Sponza");
-        Sponza->SetSections(MeshSystem().LoadModel("Assets/Sponza/Sponza.glb"));
+        StaticMeshActor* Sponza = World.SpawnActorNamed<StaticMeshActor>("Scene");
+        Sponza->SetSections(MeshSystem().LoadModel("Assets/TestScene.glb"));
 
         scene::Camera* Camera = World.SpawnActorNamed<scene::Camera>("Camera", m_Window.Width(), m_Window.Height());
         if (ModelBounds.IsValid())

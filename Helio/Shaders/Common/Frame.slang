@@ -55,7 +55,7 @@ FrameConstants LoadFrameConstants(uint Slot) {
     F.ShadowMapSlot = B.Load(192);
     F.Proj = LoadMat4ColumnStored(B, 208);
     F.InvProj = LoadMat4ColumnStored(B, 272);
-    F.ViewportAO = asfloat(B.Load4(288));
+    F.ViewportAO = asfloat(B.Load4(336));
     return F;
 }
 

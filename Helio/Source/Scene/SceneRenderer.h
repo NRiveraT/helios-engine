@@ -39,6 +39,7 @@
 #include <functional>
 #include <unordered_map>
 #include <vector>
+#include <Logging/Log.h>
 
 namespace helio::scene
 {
@@ -83,10 +84,40 @@ namespace helio::scene
     };
     static_assert(sizeof(FrameConstants) == 352, "must match Shaders/Common/Frame.slang");
 
+    enum class DebugViewMode : uint32_t
+    {
+        Lit,
+        Depth,
+        WorldNormals,
+        WorldPosition,
+        AmbientOcclusion,
+        LightingOnly,
+        Count
+    };
+
+    static constexpr const char* DebugViewModeToString(DebugViewMode Mode)
+    {
+        switch (Mode)
+        {
+        case DebugViewMode::Lit:
+            return "Default Lit";
+        case DebugViewMode::Depth:
+            return "Depth";
+        case DebugViewMode::WorldNormals:
+            return "World Normal";
+        case DebugViewMode::WorldPosition:
+            return "World Position";
+        case DebugViewMode::AmbientOcclusion:
+            return "Ambient Occlusion";
+        case DebugViewMode::LightingOnly:
+            return "Lighting Only";
+        }
+    }
+    
     class SceneRenderer
     {
     public:
-        static constexpr uint32_t kShadowMapResolution = 4096;
+        static constexpr uint32_t kShadowMapResolution = 1024;
         static constexpr uint32_t kMaxInstances = 16384;
 
         SceneRenderer(rhi::Device& RHI, int Width, int Height);
@@ -115,19 +146,22 @@ namespace helio::scene
         [[nodiscard]] int GetWidth() const noexcept { return m_Width; }
         [[nodiscard]] int GetHeight() const noexcept { return m_Height; }
 
-        uint32_t GetDebugViewMode() const noexcept { return m_DebugViewMode; }
+        DebugViewMode GetDebugViewMode() const noexcept { return m_DebugViewMode; }
         
         /// Queue one instance of `M` for this frame. `WorldTransform` is the
         /// actor's WORLD transform (the scene graph already composed parents).
         void SubmitMesh(const resource::Mesh& M, const resource::Material& Mat, const Transform& WorldTransform);
 
-        [[nodiscard]] void SetDebugViewMode(uint32_t Mode) noexcept { m_DebugViewMode = Mode; }
+        [[nodiscard]] void SetDebugViewMode(DebugViewMode Mode) noexcept
+        {
+            m_DebugViewMode = Mode;
+        }
         /// CPU time spent inside the previous `Render()` call, in ms — for
         /// editor stats (GPU time comes from `Device::LastFrameGpuMs`).
         [[nodiscard]] double LastRenderCpuMs() const noexcept { return m_LastCpuMs; }
 
     private:
-        uint32_t m_DebugViewMode = 2;
+        DebugViewMode m_DebugViewMode = DebugViewMode::Lit;
         
         /// Everything the shadow pass + mesh pass need to know about the sun.
         struct ShadowData
@@ -156,6 +190,7 @@ namespace helio::scene
         rhi::TextureHandle m_AO;
         
         rhi::PipelineHandle m_DepthPrepassPipeline;
+        rhi::PipelineHandle m_AmbientOcclusionPipeline;
 
         rhi::PipelineHandle m_MeshPipeline;
         rhi::PipelineHandle m_ShadowMapPipeline;

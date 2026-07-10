@@ -51,8 +51,10 @@ struct MeshInstancedPushConsts {
     uint32_t   MetalRoughTex;      // 56
     uint32_t   EmissiveTex;        // 60
     uint32_t   OcclusionTex;       // 64
+
+    uint32_t AOSamplerSlot; // 72
 };
-static_assert(sizeof(MeshInstancedPushConsts) == 68, "must match the PC block in Shaders/Passes/MeshInstanced.slang");
+static_assert(sizeof(MeshInstancedPushConsts) == 72, "must match the PC block in Shaders/Passes/MeshInstanced.slang");
 
 struct DepthPrepassPushConsts
 {
@@ -60,8 +62,9 @@ struct DepthPrepassPushConsts
     uint32_t VertexBufferSlot;
     uint32_t InstanceBufferSlot;
     uint32_t InstanceBase;
+    uint32_t SamplerSlot;
 };
-static_assert(sizeof(DepthPrepassPushConsts) == 16, "must match the PC block in Shaders/Passes/DepthPrepass.slang");
+static_assert(sizeof(DepthPrepassPushConsts) == 20, "must match the PC block in Shaders/Passes/DepthPrepass.slang");
 
 struct PostProcessPushConstants
 {
@@ -74,8 +77,9 @@ struct DebugViewPushConst
     uint32_t SourceSlot;
     float NearZ;
     float DebugFar;
+    uint32_t FrameSlot;
 };
-    static_assert(sizeof(DebugViewPushConst) == 16, "must match the PC block in Shaders/Debug/DebugViewMode.slang");
+    static_assert(sizeof(DebugViewPushConst) == 20, "must match the PC block in Shaders/Debug/DebugViewMode.slang");
     
 /// CPU mirror of the `PC` struct in `Shaders/Passes/ShadowMap.slang`.
 /// The light's view-projection comes from FrameConstants.
