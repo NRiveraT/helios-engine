@@ -3,6 +3,7 @@
 #include "TextureCache.h"
 
 #include <Core/Logging/Log.h>
+#include <Core/Math/Transform.h>
 
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
@@ -102,6 +103,45 @@ float3 GltfToHelio(fastgltf::math::fvec3 V) {
     return float3(V.x(), V.y(), -V.z());
 }
 
+// The SAME handedness flip as GltfToHelio, but for a node transform. Flipping
+// the world's Z axis is the conjugation `S·M·S` with `S = diag(1,1,-1)`; on a
+// decomposed TRS that is: negate translation.z, negate the quaternion's x and y
+// (a Z-axis reflection of the rotation), leave scale (a diagonal, unchanged).
+// The result composes correctly with the already-Z-negated vertex data.
+Transform GltfNodeToHelio(const fastgltf::TRS& T) {
+    return Transform(
+        float3(T.translation.x(), T.translation.y(), -T.translation.z()),
+        float4(-T.rotation.x(), -T.rotation.y(), T.rotation.z(), T.rotation.w()),
+        float3(T.scale.x(), T.scale.y(), T.scale.z()));
+}
+
+// Depth-first walk of the glTF scene graph, accumulating each node's world
+// matrix (relative to the file root) in Helio space. Every node that references
+// a mesh becomes an `ImportedNode` placement. Composing MATRICES (not
+// `Transform`s) down the chain keeps non-uniform parent scale exact. Requires
+// `Options::DecomposeNodeMatrices` so every `node.transform` is a `TRS`.
+void WalkSceneNode(const fastgltf::Asset& Asset, size_t NodeIndex,
+                   const float4x4& ParentToRoot, std::vector<ImportedNode>& Out) {
+    const fastgltf::Node& Node = Asset.nodes[NodeIndex];
+
+    float4x4 Local = float4x4::identity();
+    if (const auto* T = std::get_if<fastgltf::TRS>(&Node.transform)) {
+        Local = GltfNodeToHelio(*T).ToMatrix();
+    }
+    const float4x4 NodeToRoot = hlslpp::mul(ParentToRoot, Local);
+
+    if (Node.meshIndex.has_value()) {
+        ImportedNode Placement;
+        Placement.Name = std::string(Node.name.begin(), Node.name.end());
+        Placement.MeshIndex = *Node.meshIndex;
+        Placement.LocalToRoot = NodeToRoot;
+        Out.push_back(std::move(Placement));
+    }
+    for (size_t Child : Node.children) {
+        WalkSceneNode(Asset, Child, NodeToRoot, Out);
+    }
+}
+
 // Recompute flat per-triangle normals when the source has none. Uses Helio's
 // left-handed winding (front faces are CCW after the winding reversal), so the
 // cross product points outward for front-facing triangles.
@@ -183,14 +223,14 @@ void ComputeTangents(MeshData& M) {
 
 } // namespace
 
-std::vector<ImportedMesh> ImportGltf(const std::filesystem::path& Path, TextureCache* Textures) {
+ImportedScene ImportGltf(const std::filesystem::path& Path, TextureCache* Textures) {
     std::vector<ImportedMesh> Out;
 
     auto DataBuffer = fastgltf::GltfDataBuffer::FromPath(Path);
     if (DataBuffer.error() != fastgltf::Error::None) {
         HELIO_LOG_WARN("Resource", "ImportGltf: cannot read '{}' ({})",
                        Path.string(), fastgltf::getErrorMessage(DataBuffer.error()));
-        return Out;
+        return {};
     }
 
     // LoadExternalBuffers resolves .bin sidecars; GenerateMeshIndices supplies
@@ -198,8 +238,12 @@ std::vector<ImportedMesh> ImportGltf(const std::filesystem::path& Path, TextureC
     // always applies; LoadExternalImages pulls referenced image files into
     // memory so the texture path can decode them (only needed when loading
     // textures).
+    // DecomposeNodeMatrices guarantees every `node.transform` is a TRS (never a
+    // raw matrix), so the scene walk can read translation/rotation/scale
+    // directly and convert them without marshaling a fastgltf matrix.
     auto Options = fastgltf::Options::LoadExternalBuffers |
-                   fastgltf::Options::GenerateMeshIndices;
+                   fastgltf::Options::GenerateMeshIndices |
+                   fastgltf::Options::DecomposeNodeMatrices;
     if (Textures != nullptr) {
         Options |= fastgltf::Options::LoadExternalImages;
     }
@@ -208,7 +252,7 @@ std::vector<ImportedMesh> ImportGltf(const std::filesystem::path& Path, TextureC
     auto Asset = Parser.loadGltf(DataBuffer.get(), Path.parent_path(), Options);
     if (Asset.error() != fastgltf::Error::None) {
         HELIO_LOG_WARN("Resource", "ImportGltf: parse failed for '{}' ({})", Path.string(), fastgltf::getErrorMessage(Asset.error()));
-        return Out;
+        return {};
     }
 
     // Deferred texture loads — collected during material parsing, then decoded
@@ -216,7 +260,8 @@ std::vector<ImportedMesh> ImportGltf(const std::filesystem::path& Path, TextureC
     // load bottleneck (CPU, ~100ms/image) and is embarrassingly parallel.
     std::vector<TexRequest> TexRequests;
 
-    for (const fastgltf::Mesh& Mesh : Asset->meshes) {
+    for (size_t MeshIdx = 0; MeshIdx < Asset->meshes.size(); ++MeshIdx) {
+        const fastgltf::Mesh& Mesh = Asset->meshes[MeshIdx];
         uint32_t PrimIndex = 0;
         for (const fastgltf::Primitive& Prim : Mesh.primitives) {
             if (Prim.type != fastgltf::PrimitiveType::Triangles) {
@@ -301,6 +346,7 @@ std::vector<ImportedMesh> ImportGltf(const std::filesystem::path& Path, TextureC
             Data.RecomputeBounds();
 
             ImportedMesh Imported;
+            Imported.SourceMeshIndex = MeshIdx;
             Imported.Name = Mesh.name.empty()
                                 ? "gltf_mesh"
                                 : std::string(Mesh.name.begin(), Mesh.name.end());
@@ -408,12 +454,28 @@ std::vector<ImportedMesh> ImportGltf(const std::filesystem::path& Path, TextureC
                        Jobs.size(), LoadMs, std::thread::hardware_concurrency());
     }
 
+    // ---- Scene graph: the layout (node placements) ---------------------------
+    // Walk the default scene's roots, accumulating world transforms. Every node
+    // that references a mesh becomes a placement; nodes sharing a mesh index are
+    // instances the loader collapses to one draw. A file with no scene graph
+    // yields no nodes, and the loader places each primitive at the origin.
+    std::vector<ImportedNode> Nodes;
+    {
+        const size_t SceneIndex = Asset->defaultScene.value_or(0);
+        if (SceneIndex < Asset->scenes.size()) {
+            for (const size_t Root : Asset->scenes[SceneIndex].nodeIndices) {
+                WalkSceneNode(Asset.get(), Root, float4x4::identity(), Nodes);
+            }
+        }
+    }
+
     if (Out.empty()) {
         HELIO_LOG_WARN("Resource", "ImportGltf: '{}' contained no triangle geometry", Path.string());
     } else {
-        HELIO_LOG_INFO("Resource", "ImportGltf: '{}' -> {} primitive(s)", Path.string(), Out.size());
+        HELIO_LOG_INFO("Resource", "ImportGltf: '{}' -> {} primitive(s), {} placement(s)",
+                       Path.string(), Out.size(), Nodes.size());
     }
-    return Out;
+    return ImportedScene{std::move(Out), std::move(Nodes)};
 }
 
 } // namespace helio::resource

@@ -16,10 +16,14 @@ namespace helio::scene
 
     void StaticMeshActor::OnRender(SceneRenderer& Renderer)
     {
-        const Transform& World = GetWorldTransform();
+        // Compose the actor's world transform with each section's baked local
+        // placement (identity for hand-built actors, the glTF node transform for
+        // imported ones), as matrices so non-uniform scale stays exact.
+        const float4x4 ActorWorld = GetWorldTransform().ToMatrix();
         for (const resource::MeshSection& Section : m_Sections)
         {
-            Renderer.SubmitMesh(Section.Mesh, Section.Material, World);
+            Renderer.SubmitMesh(Section.Mesh, Section.Material,
+                                hlslpp::mul(ActorWorld, Section.LocalTransform));
         }
     }
 } // namespace helio::scene

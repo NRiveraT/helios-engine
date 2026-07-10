@@ -152,6 +152,12 @@ namespace helio::scene
         /// actor's WORLD transform (the scene graph already composed parents).
         void SubmitMesh(const resource::Mesh& M, const resource::Material& Mat, const Transform& WorldTransform);
 
+        /// Matrix overload — used when the caller already has a composed 4x4
+        /// (e.g. `actorWorld * sectionLocal` for a placed mesh section), so no
+        /// `Transform` round-trip is needed. The `Transform` overload forwards
+        /// here after `ToMatrix()`.
+        void SubmitMesh(const resource::Mesh& M, const resource::Material& Mat, const float4x4& WorldMatrix);
+
         [[nodiscard]] void SetDebugViewMode(DebugViewMode Mode) noexcept
         {
             m_DebugViewMode = Mode;

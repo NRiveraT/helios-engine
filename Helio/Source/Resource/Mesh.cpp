@@ -17,12 +17,44 @@ namespace helio::resource {
 MeshSystem::MeshSystem(rhi::Device& Dev) : m_dev(&Dev), m_textureCache(Dev) {}
 
 std::vector<MeshSection> MeshSystem::LoadModel(const std::filesystem::path& Path) {
-    std::vector<MeshSection> Sections;
-    for (ImportedMesh& Imported : ImportGltf(Path, &m_textureCache)) {
+    ImportedScene Scene = ImportGltf(Path, &m_textureCache);
+
+    // Create one GPU mesh per imported primitive, grouped by the glTF mesh it
+    // came from. Nodes that reference the same mesh index then reuse the SAME
+    // Mesh handles — that shared identity is what lets the renderer collapse
+    // them into one instanced draw (batching keys on Mesh.Id).
+    struct Prim { Mesh Mesh; Material Material; std::string Name; };
+    std::unordered_map<size_t, std::vector<Prim>> ByMesh;
+    for (ImportedMesh& Imported : Scene.Primitives) {
         Mesh M = CreateMesh({.Data = &Imported.Data, .DebugName = Imported.Name.c_str()});
         if (M.IsValid()) {
-            std::string DebugName = Imported.Name;
-            Sections.push_back({DebugName, M, Imported.Material});
+            ByMesh[Imported.SourceMeshIndex].push_back(
+                {M, std::move(Imported.Material), std::move(Imported.Name)});
+        }
+    }
+
+    std::vector<MeshSection> Sections;
+
+    // No scene graph (or a file that placed nothing): one section per primitive
+    // at the origin — the pre-hierarchy behavior.
+    if (Scene.Nodes.empty()) {
+        for (auto& [MeshIndex, Prims] : ByMesh) {
+            for (Prim& P : Prims) {
+                Sections.push_back({P.Name, P.Mesh, P.Material, float4x4::identity()});
+            }
+        }
+        return Sections;
+    }
+
+    // One section per (placement × primitive of its mesh), at the node's baked
+    // world transform. Shared handles + equal materials collapse downstream.
+    for (const ImportedNode& Node : Scene.Nodes) {
+        const auto It = ByMesh.find(Node.MeshIndex);
+        if (It == ByMesh.end()) {
+            continue; // node referenced a mesh with no renderable triangle geometry
+        }
+        for (const Prim& P : It->second) {
+            Sections.push_back({P.Name, P.Mesh, P.Material, Node.LocalToRoot});
         }
     }
     return Sections;

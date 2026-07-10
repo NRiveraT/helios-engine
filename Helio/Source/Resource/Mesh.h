@@ -84,6 +84,12 @@ struct MeshSection {
     std::string SectionName;  // for debugging; not used by the renderer
     Mesh     Mesh;
     Material Material;
+    /// Placement of this section RELATIVE to its owning actor, in Helio space.
+    /// `LoadModel` bakes each glTF node's world transform here so a multi-object
+    /// file reconstructs its authored layout under a single actor. Identity for
+    /// hand-built single-mesh actors (the whole actor moves as one). The actor
+    /// submits `actorWorld * LocalTransform` per section.
+    float4x4 LocalTransform = float4x4::identity();
 };
 
 /// Authoring options passed to `MeshSystem::CreateMesh`.

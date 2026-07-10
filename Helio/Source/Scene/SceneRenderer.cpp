@@ -186,7 +186,11 @@ namespace helio::scene
 
     void SceneRenderer::SubmitMesh(const resource::Mesh& M, const resource::Material& Mat, const Transform& WorldTransform)
     {
-        const float4x4 World = WorldTransform.ToMatrix();
+        SubmitMesh(M, Mat, WorldTransform.ToMatrix());
+    }
+
+    void SceneRenderer::SubmitMesh(const resource::Mesh& M, const resource::Material& Mat, const float4x4& World)
+    {
         m_PendingInstances[M.Id].push_back({M, Mat, World});
         if (M.Bounds.IsValid())
         {
