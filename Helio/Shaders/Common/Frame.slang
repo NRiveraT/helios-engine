@@ -29,6 +29,8 @@ struct FrameConstants {
     float4 LightColorAmbient;
     float4 ShadowParams;
     uint ShadowMapSlot;
+    uint LightBufferSlot;
+    uint LightCount;
     float4x4 Proj;
     float4x4 InvProj;
     float4 ViewportAO;
@@ -53,6 +55,8 @@ FrameConstants LoadFrameConstants(uint Slot) {
     F.LightColorAmbient = asfloat(B.Load4(160));
     F.ShadowParams = asfloat(B.Load4(176));
     F.ShadowMapSlot = B.Load(192);
+    F.LightBufferSlot = B.Load(196);
+    F.LightCount = B.Load(200);
     F.Proj = LoadMat4ColumnStored(B, 208);
     F.InvProj = LoadMat4ColumnStored(B, 272);
     F.ViewportAO = asfloat(B.Load4(336));

@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <random>
+#include <Actors/SpotLight.h>
 
 namespace helio::gameplay
 {
@@ -78,7 +80,18 @@ namespace helio::gameplay
         }
 
         StaticMeshActor* Sponza = World.SpawnActorNamed<StaticMeshActor>("Scene");
-        Sponza->SetSections(MeshSystem().LoadModel("Assets/TestScene.glb"));
+        Sponza->SetSections(MeshSystem().LoadModel("Assets/Sponza/Sponza.glb"));
+
+        for (int l = 0; l < 5; l++)
+        {
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_real_distribution<float> dis(0.5, 1.0);
+
+            scene::SpotLight* spot_light = World.SpawnActorNamed<scene::SpotLight>("SpotLight");
+            spot_light->SetWorldPosition(float3(-15 + (5.0 * l), 2.0, 0));
+            spot_light->SetColor(float3(dis(gen), dis(gen), dis(gen)));
+        }
 
         scene::Camera* Camera = World.SpawnActorNamed<scene::Camera>("Camera", m_Window.Width(), m_Window.Height());
         if (ModelBounds.IsValid())

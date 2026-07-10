@@ -11,18 +11,14 @@
 
 #include <Scene/Actor.h>
 
+#include <Actors/LightActor.h>
+
 namespace helio::scene
 {
-    class DirectionalLight final : public Actor
+    class DirectionalLight final : public LightActor
     {
     public:
         explicit DirectionalLight(HelioWorld& W);
-
-        [[nodiscard]] float3 GetColor() const noexcept { return m_Color; }
-        void SetColor(float3 Color) noexcept { m_Color = Color; }
-
-        [[nodiscard]] float GetIntensity() const noexcept { return m_Intensity; }
-        void SetIntensity(float Intensity) noexcept { m_Intensity = Intensity; }
 
         /// Flat ambient term applied scene-wide (V1: carried by the sun until
         /// an environment-lighting system exists). Keeps unlit faces readable.
@@ -34,8 +30,6 @@ namespace helio::scene
         [[nodiscard]] float3 GetDirection() const { return GetForward(); }
 
     private:
-        float3 m_Color{1.0f, 1.0f, 1.0f};
-        float m_Intensity = 1.0f;
-        float m_Ambient = 0.03f;
+        float m_Ambient = 0.0f;
     };
 } // namespace helio::scene

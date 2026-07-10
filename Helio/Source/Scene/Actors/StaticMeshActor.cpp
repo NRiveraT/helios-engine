@@ -22,8 +22,7 @@ namespace helio::scene
         const float4x4 ActorWorld = GetWorldTransform().ToMatrix();
         for (const resource::MeshSection& Section : m_Sections)
         {
-            Renderer.SubmitMesh(Section.Mesh, Section.Material,
-                                hlslpp::mul(ActorWorld, Section.LocalTransform));
+            Renderer.SubmitMesh(Section.Mesh, Section.Material, hlslpp::mul(ActorWorld, Section.LocalTransform));
         }
     }
 } // namespace helio::scene

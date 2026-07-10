@@ -1,0 +1,1 @@
+﻿#include "SpotLight.h"

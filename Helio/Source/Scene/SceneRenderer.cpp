@@ -11,13 +11,18 @@
 
 #include <cmath>
 
+#include "Actors/SpotLight.h"
+
 namespace helio::scene
 {
+    static constexpr const uint32_t kMAX_LIGHTS = 16;
+
     SceneRenderer::SceneRenderer(rhi::Device& RHI, int Width, int Height)
         : m_RHI(&RHI)
           , m_Overlay(RHI, rhi::Format::RGBA8_SRGB)
           , m_DebugDraw(RHI, rhi::Format::RGBA8_SRGB, &m_Overlay)
           , m_InstanceBatch(RHI, kMaxInstances, "SceneInstances")
+          , m_LightBufferRing(RHI, kMAX_LIGHTS * sizeof(GPULight))
           , m_FrameConstantsRing(RHI, sizeof(FrameConstants), "FrameConstants")
           , m_Width(Width)
           , m_Height(Height)
@@ -320,6 +325,50 @@ namespace helio::scene
         const DirectionalLight* Light = m_World != nullptr ? m_World->GetActorByClass<DirectionalLight>() : nullptr;
         const ShadowData Shadow = Light != nullptr ? BuildShadowData(*Light) : ShadowData{};
 
+        std::vector<GPULight> GPULights;
+        for (const auto& a : m_World->GetActors())
+        {
+            if (GPULights.size() >= kMAX_LIGHTS) continue;
+            
+            auto* L = dynamic_cast<LightActor*>(a.get());
+
+            if (!L || L->IsPendingDestroy()) continue;
+            
+            if (L->GetLightType() == LightType::DirectionalLight) continue;
+
+            GPULight light {};
+            light.Position[0] = L->GetWorldPosition().x;
+            light.Position[1] = L->GetWorldPosition().y;
+            light.Position[2] = L->GetWorldPosition().z;
+
+            light.LightType = static_cast<uint32_t>(L->GetLightType());
+
+            light.Color[0] = L->GetColor().r;
+            light.Color[1] = L->GetColor().g;
+            light.Color[2] = L->GetColor().b;
+
+            light.Intensity = L->GetIntensity();
+
+            light.Direction[0] = L->GetForward().x;
+            light.Direction[1] = L->GetForward().y;
+            light.Direction[2] = L->GetForward().z;
+
+            light.Range = L->GetRange();
+
+            if (L->GetLightType() == LightType::SpotLight)
+            {
+                if(SpotLight* S = dynamic_cast<SpotLight*>(L))
+                    light.CosOuter = S->GetSpotLightAngleMax();
+            }
+
+            GPULights.push_back(light);
+        }
+        
+        if (!GPULights.empty())
+        {
+            m_LightBufferRing.Write(0, GPULights.data(), GPULights.size() * sizeof(GPULight));
+        }
+
         // ---- Per-frame constants (one bindless SSBO slot, rotates per frame) --
         FrameConstants FC{};
         if (m_Camera != nullptr)
@@ -358,8 +407,11 @@ namespace helio::scene
             Shadow.Enabled ? 1.0f : 0.0f);
         FC.ShadowMapSlot = m_ShadowMapTexture.SampledSlot;
 
+        FC.LightBufferSlot = m_LightBufferRing.Current().BindlessSlot;
+        FC.LightCount = static_cast<uint32_t>(GPULights.size());
+        
         FC.ViewportAO = float4(static_cast<float>(m_Width), static_cast<float>(m_Height), hlslpp::asfloat(m_AO.SampledSlot), 1.f);
-
+        
         m_FrameConstantsRing.Write(0, &FC, sizeof(FC));
         const uint32_t FrameSlot = m_FrameConstantsRing.Current().BindlessSlot;
 
@@ -485,7 +537,7 @@ namespace helio::scene
                 PC.FrameSlot = FrameSlot;
                 PC.InstanceBufferSlot = m_InstanceBatch.Buffer().BindlessSlot;
                 PC.AOSamplerSlot = m_AO.SampledSlot;
-                
+
                 for (const auto& D : m_Draws)
                 {
                     HELIO_PROFILE_ZONE("DrawMesh")

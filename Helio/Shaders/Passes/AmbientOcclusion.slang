@@ -13,7 +13,7 @@ struct AOPushConsts {
 static const uint SAMPLES = 16;
 static const float BIAS = 0.025;
 static const float RADIUS = 0.5;
-static const float STRENGTH = 1.5;
+static const float STRENGTH = 2.5;
 static const float PI = 3.14159265;
 static const float GOLDEN_RATIO = 2.399962;
 

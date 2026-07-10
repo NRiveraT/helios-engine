@@ -7,7 +7,7 @@
 ///      World-space caster bounds accumulate here for shadow fitting.
 ///   2. `BatchMeshInstances` packs all transforms into one ring-buffered
 ///      instance buffer (one `MeshDraw` per mesh → one DrawIndexed each).
-///   3. Per-frame `FrameConstants` (view-proj, light, shadow matrix + params)
+///   3. Per-frame `` (view-proj, light, shadow matrix + params)
 ///      upload once into a bindless storage buffer — push constants carry
 ///      only per-draw slots + material scalars.
 ///   4. Passes: "Shadow Map" (depth-only, light-fitted ortho) → "Static
@@ -64,6 +64,20 @@ namespace helio::scene
         float4x4 World; // already converted from Transform
     };
 
+    struct GPULight
+    {
+        float Position[3];
+        uint32_t LightType;
+        float Color[3];
+        float Intensity;
+        float Direction[3];
+        float Range;
+        float CosInner;
+        float CosOuter;
+        float Pad[2];
+    };
+    static_assert(sizeof(GPULight) == 64, "GPULight buffer must match shader");
+
     /// CPU mirror of `Shaders/Common/Frame.slang` — per-frame constants,
     /// uploaded once per frame into a bindless storage buffer.
     struct FrameConstants
@@ -76,7 +90,9 @@ namespace helio::scene
         Vec4Packed ShadowParams;      // offset 176: x = uv texel, y = normal offset (world),
                                       //             z = receiver depth bias (NDC), w = enabled
         uint32_t ShadowMapSlot;       // offset 192
-        uint32_t Pad0, Pad1, Pad2;    // offset 196
+        uint32_t LightBufferSlot;     // offset 196
+        uint32_t LightCount;          // offset 200
+        uint32_t Pad2;    // offset 196
 
         Mat4Packed Proj;
         Mat4Packed InvProj;
@@ -218,6 +234,7 @@ namespace helio::scene
         math::AABB m_CasterBounds; // world-space, this frame's submissions
 
         resource::InstanceBatch m_InstanceBatch;   // ring-buffered per frame
+        rhi::RingUploadBuffer m_LightBufferRing; // one FrameConstants per frame slot
         rhi::RingUploadBuffer m_FrameConstantsRing; // one FrameConstants per frame slot
 
         core::Clock m_Clock;

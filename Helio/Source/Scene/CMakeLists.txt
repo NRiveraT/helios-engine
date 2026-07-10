@@ -10,6 +10,8 @@ helio_add_module(Scene
         SceneRenderer.cpp
         Actors/Camera.cpp
         Actors/StaticMeshActor.cpp
+        Actors/LightActor.cpp
+        Actors/SpotLight.cpp
         Actors/DirectionalLight.cpp
     PUBLIC_LINK
         Helio.Core
